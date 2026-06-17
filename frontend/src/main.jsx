@@ -26,6 +26,87 @@ function isTelegramUrl(value) {
   }
 }
 
+function compactText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function getDisplayTitle(item) {
+  const title = compactText(item?.title);
+  if (title && title !== 'Без заголовка') return title;
+
+  const sourceText = compactText(item?.text || item?.text_preview);
+  if (!sourceText) return 'Без заголовка';
+
+  return sourceText.length > 80 ? `${sourceText.slice(0, 80)}...` : sourceText;
+}
+
+function isImageUrl(value) {
+  if (typeof value !== 'string') return false;
+  const cleanValue = value.split('?')[0].toLowerCase();
+  return /\.(apng|avif|gif|jpe?g|png|svg|webp)$/.test(cleanValue) || value.startsWith('data:image/');
+}
+
+function collectImageUrls(value, result = []) {
+  if (!value) return result;
+
+  if (typeof value === 'string') {
+    if (isImageUrl(value)) result.push(value);
+    return result;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectImageUrls(entry, result));
+    return result;
+  }
+
+  if (typeof value === 'object') {
+    const type = compactText(value.type || value.media_type || value.mime_type || value.mime || value.kind).toLowerCase();
+    const candidateKeys = ['url', 'src', 'href', 'path', 'file', 'thumbnail', 'thumb', 'preview', 'image', 'photo'];
+    candidateKeys.forEach((key) => {
+      const candidate = value[key];
+      if (typeof candidate === 'string' && (type.includes('image') || type.includes('photo') || isImageUrl(candidate))) {
+        result.push(candidate);
+      } else if (candidate && typeof candidate === 'object') {
+        collectImageUrls(candidate, result);
+      }
+    });
+    Object.entries(value).forEach(([key, candidate]) => {
+      if (candidate && typeof candidate === 'object' && !candidateKeys.includes(key)) {
+        collectImageUrls(candidate, result);
+      }
+    });
+  }
+
+  return result;
+}
+
+function getMediaImages(mediaJson) {
+  return [...new Set(collectImageUrls(mediaJson))];
+}
+
+function MediaBlock({ item }) {
+  const images = getMediaImages(item?.media_json);
+  const mediaCount = Number(item?.media_count || 0);
+
+  if (images.length > 0) {
+    return (
+      <section className={`media-gallery ${images.length > 1 ? 'multiple' : 'single'}`} aria-label="Медиа публикации">
+        {images.map((src, index) => (
+          <a key={`${src}-${index}`} href={src} target="_blank" rel="noreferrer" className="media-tile">
+            <img src={src} alt={`Медиа ${index + 1}`} loading="lazy" />
+          </a>
+        ))}
+      </section>
+    );
+  }
+
+  if (mediaCount > 0) {
+    return <div className="media-count-note">Медиа: {mediaCount}</div>;
+  }
+
+  return null;
+}
+
 function SourceFilter({ sources, selectedSource, selectedType, onChange }) {
   const sourceTypes = useMemo(() => [...new Set(sources.map((source) => source.source_type).filter(Boolean))], [sources]);
   const sourceNames = useMemo(
@@ -54,11 +135,13 @@ function SourceFilter({ sources, selectedSource, selectedType, onChange }) {
 }
 
 function NewsCard({ item, active, onClick }) {
+  const displayTitle = getDisplayTitle(item);
   return (
     <button className={`news-card ${active ? 'active' : ''}`} onClick={() => onClick(item.id)}>
       <div className="news-meta"><span>{item.source_name || 'Источник не указан'}</span><span>{item.source_type || 'type —'}</span></div>
-      <h3>{item.title || 'Без заголовка'}</h3>
+      <h3>{displayTitle}</h3>
       <time>{formatDate(item.published_at)}</time>
+      {Number(item.media_count || 0) > 0 && <span className="media-badge">Медиа: {item.media_count}</span>}
       <p>{item.text_preview || 'Нет превью текста'}</p>
     </button>
   );
@@ -77,22 +160,23 @@ function PublicationViewer({ item }) {
   if (!item) return <div className="empty-state">Выберите публикацию слева.</div>;
 
   const showFallback = !item.url || telegramUrl || iframeFailed;
+  const displayTitle = getDisplayTitle(item);
   const fallbackReason = telegramUrl
-    ? 'Telegram не разрешает открывать эту публикацию внутри iframe. Ниже показан текст из базы данных.'
+    ? null
     : 'Оригинал не удалось открыть во встроенном просмотре. Ниже показан текст из базы данных.';
 
   return (
     <article className="publication">
       <header>
-        <h1>{item.title || 'Без заголовка'}</h1>
+        <h1>{displayTitle}</h1>
         <div className="publication-meta">{item.source_name} · {item.source_type} · {formatDate(item.published_at)}</div>
         {item.url && <a href={item.url} target="_blank" rel="noreferrer">Открыть оригинал</a>}
       </header>
-      {!showFallback && <iframe title={item.title || `publication-${item.id}`} src={item.url} onError={() => setIframeFailed(true)} />}
+      {!showFallback && <iframe title={displayTitle || `publication-${item.id}`} src={item.url} onError={() => setIframeFailed(true)} />}
       {showFallback && (
         <div className="fallback-content">
-          {item.url && <p className="fallback-note">{fallbackReason}</p>}
-          <h2>{item.title || 'Без заголовка'}</h2>
+          {fallbackReason && <p className="fallback-note">{fallbackReason}</p>}
+          <MediaBlock item={item} />
           <p>{item.text || 'Текст публикации отсутствует.'}</p>
         </div>
       )}
@@ -109,8 +193,9 @@ function SimilarItems({ items, loading, onSelect }) {
       <div className="similar-list">
         {items.map((item) => (
           <button key={item.id} className="similar-card" onClick={() => onSelect(item.id)}>
-            <strong>{item.title || 'Без заголовка'}</strong>
+            <strong>{getDisplayTitle(item)}</strong>
             <span>{item.source_name} · {formatDate(item.published_at)}</span>
+            {Number(item.media_count || 0) > 0 && <span className="media-badge">Медиа: {item.media_count}</span>}
             <p>{item.text_preview || 'Нет превью текста'}</p>
           </button>
         ))}
