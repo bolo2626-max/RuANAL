@@ -133,9 +133,18 @@ def get_similar_items(item_id: int, db: Session = Depends(get_db)) -> list[dict[
         if rows:
             return [_row_dict(row) for row in rows]
 
+    if current_data.get("source_name"):
+        rows = db.execute(text(base_select + """
+            WHERE source_name = :source_name AND id != :id
+            ORDER BY published_at DESC, id DESC
+            LIMIT 20
+        """), {"source_name": current_data.get("source_name"), "id": item_id}).fetchall()
+        if rows:
+            return [_row_dict(row) for row in rows]
+
     rows = db.execute(text(base_select + """
-        WHERE source_name = :source_name AND id != :id
+        WHERE id != :id
         ORDER BY published_at DESC, id DESC
         LIMIT 20
-    """), {"source_name": current_data.get("source_name"), "id": item_id}).fetchall()
+    """), {"id": item_id}).fetchall()
     return [_row_dict(row) for row in rows]
