@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/+$/, '');
 const ITEMS_PAGE_SIZE = 50;
 
 async function apiGet(path) {
@@ -46,11 +46,21 @@ function isImageUrl(value) {
   return /\.(apng|avif|gif|jpe?g|png|svg|webp)$/.test(cleanValue) || value.startsWith('data:image/');
 }
 
+function buildMediaSrc(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const cleanValue = value.trim();
+  if (/^(https?:|data:|blob:)/i.test(cleanValue)) return cleanValue;
+  return `${API_BASE_URL}/${cleanValue.replace(/^\/+/, '')}`;
+}
+
 function collectImageUrls(value, result = []) {
   if (!value) return result;
 
   if (typeof value === 'string') {
-    if (isImageUrl(value)) result.push(value);
+    if (isImageUrl(value)) {
+      const src = buildMediaSrc(value);
+      if (src) result.push(src);
+    }
     return result;
   }
 
@@ -61,11 +71,13 @@ function collectImageUrls(value, result = []) {
 
   if (typeof value === 'object') {
     const type = compactText(value.type || value.media_type || value.mime_type || value.mime || value.kind).toLowerCase();
-    const candidateKeys = ['url', 'src', 'href', 'path', 'file', 'thumbnail', 'thumb', 'preview', 'image', 'photo'];
+    const isImageMedia = type === 'image' || type.includes('image') || type.includes('photo');
+    const candidateKeys = ['local_path', 'url', 'src', 'href', 'path', 'file', 'thumbnail', 'thumb', 'preview', 'image', 'photo'];
     candidateKeys.forEach((key) => {
       const candidate = value[key];
-      if (typeof candidate === 'string' && (type.includes('image') || type.includes('photo') || isImageUrl(candidate))) {
-        result.push(candidate);
+      if (typeof candidate === 'string' && (isImageMedia || isImageUrl(candidate))) {
+        const src = buildMediaSrc(candidate);
+        if (src) result.push(src);
       } else if (candidate && typeof candidate === 'object') {
         collectImageUrls(candidate, result);
       }
@@ -107,7 +119,7 @@ function MediaBlock({ item }) {
   return null;
 }
 
-function SourceFilter({ sources, selectedSource, selectedType, onChange }) {
+function SourceFilter({ sources, selectedSource, selectedType, dateFrom, dateTo, onChange, onDateChange }) {
   const sourceTypes = useMemo(() => [...new Set(sources.map((source) => source.source_type).filter(Boolean))], [sources]);
   const sourceNames = useMemo(
     () => sources.filter((source) => !selectedType || source.source_type === selectedType),
@@ -130,6 +142,16 @@ function SourceFilter({ sources, selectedSource, selectedType, onChange }) {
           {sourceNames.map((source) => <option key={`${source.source_type}-${source.source_name}`} value={source.source_name}>{source.source_name} ({source.count})</option>)}
         </select>
       </label>
+      <div className="date-filter-row">
+        <label>
+          Дата с:
+          <input type="date" value={dateFrom} onChange={(event) => onDateChange({ dateFrom: event.target.value, dateTo })} />
+        </label>
+        <label>
+          Дата по:
+          <input type="date" value={dateTo} onChange={(event) => onDateChange({ dateFrom, dateTo: event.target.value })} />
+        </label>
+      </div>
     </section>
   );
 }
@@ -208,6 +230,8 @@ function App() {
   const [sources, setSources] = useState([]);
   const [selectedSource, setSelectedSource] = useState(null);
   const [selectedType, setSelectedType] = useState(null);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [items, setItems] = useState([]);
   const [activeItemId, setActiveItemId] = useState(null);
   const [activeItem, setActiveItem] = useState(null);
@@ -224,6 +248,8 @@ function App() {
     const params = new URLSearchParams({ limit: String(ITEMS_PAGE_SIZE), offset: String(offset) });
     if (selectedSource) params.set('source_name', selectedSource);
     if (selectedType) params.set('source_type', selectedType);
+    if (dateFrom) params.set('date_from', dateFrom);
+    if (dateTo) params.set('date_to', dateTo);
     return `/api/items?${params}`;
   }
 
@@ -245,7 +271,7 @@ function App() {
     setActiveItem(null);
     setSimilarItems([]);
     loadItems(0, false);
-  }, [selectedSource, selectedType]);
+  }, [selectedSource, selectedType, dateFrom, dateTo]);
 
   useEffect(() => {
     if (!activeItemId) return;
@@ -265,7 +291,7 @@ function App() {
     <main className="app-shell">
       <aside className="sidebar">
         <div className="brand"><h1>RuANAL</h1><span>Media reader MVP</span></div>
-        <SourceFilter sources={sources} selectedSource={selectedSource} selectedType={selectedType} onChange={({ sourceType, sourceName }) => { setSelectedType(sourceType); setSelectedSource(sourceName); }} />
+        <SourceFilter sources={sources} selectedSource={selectedSource} selectedType={selectedType} dateFrom={dateFrom} dateTo={dateTo} onChange={({ sourceType, sourceName }) => { setSelectedType(sourceType); setSelectedSource(sourceName); }} onDateChange={({ dateFrom: nextDateFrom, dateTo: nextDateTo }) => { setDateFrom(nextDateFrom); setDateTo(nextDateTo); }} />
         {(itemsLoading || detailLoading) && <div className="status">Загрузка…</div>}
         {error && <div className="error">{error}</div>}
         <NewsGrid items={items} activeItemId={activeItemId} onSelect={setActiveItemId} />
