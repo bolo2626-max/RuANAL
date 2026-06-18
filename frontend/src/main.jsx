@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/+$/, '');
-const ITEMS_PAGE_SIZE = 50;
+const ITEMS_PAGE_SIZE = 30;
 
 async function apiGet(path) {
   const response = await fetch(`${API_BASE_URL}${path}`);
@@ -294,6 +294,7 @@ function App() {
   const [fiveDaysTags, setFiveDaysTags] = useState([]);
   const [activeKeyword, setActiveKeyword] = useState(null);
   const contentPaneRef = useRef(null);
+  const itemsRequestIdRef = useRef(0);
   const [itemsLoading, setItemsLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -311,21 +312,24 @@ function App() {
   }
 
   function loadItems(nextPage) {
+    const requestId = itemsRequestIdRef.current + 1;
+    itemsRequestIdRef.current = requestId;
     setItemsLoading(true);
     setError(null);
     apiGet(buildItemsPath(nextPage))
       .then((data) => {
+        if (requestId !== itemsRequestIdRef.current) return;
         setItems(data);
         setHasNextPage(data.length === ITEMS_PAGE_SIZE);
         setActiveItemId(data[0]?.id || null);
       })
-      .catch((err) => setError(err.message))
-      .finally(() => setItemsLoading(false));
+      .catch((err) => {
+        if (requestId === itemsRequestIdRef.current) setError(err.message);
+      })
+      .finally(() => {
+        if (requestId === itemsRequestIdRef.current) setItemsLoading(false);
+      });
   }
-
-  useEffect(() => {
-    setPage(1);
-  }, [selectedSource, selectedType, dateFrom, dateTo, activeKeyword]);
 
   useEffect(() => {
     setActiveItem(null);
@@ -363,11 +367,11 @@ function App() {
       <aside className="sidebar">
         <div className="sidebar-sticky">
           <div className="brand"><h1>RuANAL</h1><span>Media reader MVP</span></div>
-          <SourceFilter sources={sources} selectedSource={selectedSource} selectedType={selectedType} dateFrom={dateFrom} dateTo={dateTo} onChange={({ sourceType, sourceName }) => { setSelectedType(sourceType); setSelectedSource(sourceName); }} onDateChange={({ dateFrom: nextDateFrom, dateTo: nextDateTo }) => { setDateFrom(nextDateFrom); setDateTo(nextDateTo); }} />
+          <SourceFilter sources={sources} selectedSource={selectedSource} selectedType={selectedType} dateFrom={dateFrom} dateTo={dateTo} onChange={({ sourceType, sourceName }) => { setSelectedType(sourceType); setSelectedSource(sourceName); setPage(1); }} onDateChange={({ dateFrom: nextDateFrom, dateTo: nextDateTo }) => { setDateFrom(nextDateFrom); setDateTo(nextDateTo); setPage(1); }} />
           {activeKeyword && (
             <div className="active-tag-filter">
               Тег: {activeKeyword}
-              <button type="button" onClick={() => setActiveKeyword(null)} aria-label="Очистить фильтр по тегу">✕</button>
+              <button type="button" onClick={() => { setActiveKeyword(null); setPage(1); }} aria-label="Очистить фильтр по тегу">✕</button>
             </div>
           )}
           {(itemsLoading || detailLoading) && <div className="status">Загрузка…</div>}
