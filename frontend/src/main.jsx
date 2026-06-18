@@ -217,12 +217,44 @@ function SimilarItems({ items, loading, onSelect }) {
           <button key={item.id} className="similar-card" onClick={() => onSelect(item.id)}>
             <strong>{getDisplayTitle(item)}</strong>
             <span>{item.source_name} · {formatDate(item.published_at)}</span>
+            {typeof item.relevance === 'number' && <span className="relevance-badge">Релевантность: {item.relevance.toFixed(2)}</span>}
             {Number(item.media_count || 0) > 0 && <span className="media-badge">Медиа: {item.media_count}</span>}
             <p>{item.text_preview || 'Нет превью текста'}</p>
           </button>
         ))}
       </div>
     </section>
+  );
+}
+
+function KeywordTags({ title, keywords }) {
+  return (
+    <section className="keyword-section">
+      <h2>{title}</h2>
+      {keywords.length === 0 && <p className="muted">Нет данных.</p>}
+      <div className="keyword-tags">
+        {keywords.map((entry) => <span key={entry.word} className="keyword-tag">{entry.word} ({entry.count})</span>)}
+      </div>
+    </section>
+  );
+}
+
+function AnalyticsPane({ dailyKeywords, fiveDaysKeywords }) {
+  return (
+    <aside className="analytics-pane">
+      <KeywordTags title="Частые слова за день" keywords={dailyKeywords} />
+      <KeywordTags title="Частые слова за 5 дней" keywords={fiveDaysKeywords} />
+    </aside>
+  );
+}
+
+function Pagination({ page, hasNextPage, loading, onPageChange }) {
+  return (
+    <nav className="pagination" aria-label="Пагинация новостей">
+      <button disabled={loading || page <= 1} onClick={() => onPageChange(page - 1)}>Назад</button>
+      <span>Страница {page}</span>
+      <button disabled={loading || !hasNextPage} onClick={() => onPageChange(page + 1)}>Вперёд</button>
+    </nav>
   );
 }
 
@@ -236,16 +268,18 @@ function App() {
   const [activeItemId, setActiveItemId] = useState(null);
   const [activeItem, setActiveItem] = useState(null);
   const [similarItems, setSimilarItems] = useState([]);
-  const [itemsOffset, setItemsOffset] = useState(0);
-  const [hasMoreItems, setHasMoreItems] = useState(true);
+  const [page, setPage] = useState(1);
+  const [hasNextPage, setHasNextPage] = useState(false);
+  const [dailyKeywords, setDailyKeywords] = useState([]);
+  const [fiveDaysKeywords, setFiveDaysKeywords] = useState([]);
   const [itemsLoading, setItemsLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState(null);
 
   useEffect(() => { apiGet('/api/sources').then(setSources).catch((err) => setError(err.message)); }, []);
 
-  function buildItemsPath(offset) {
-    const params = new URLSearchParams({ limit: String(ITEMS_PAGE_SIZE), offset: String(offset) });
+  function buildItemsPath(nextPage) {
+    const params = new URLSearchParams({ limit: String(ITEMS_PAGE_SIZE), offset: String((nextPage - 1) * ITEMS_PAGE_SIZE) });
     if (selectedSource) params.set('source_name', selectedSource);
     if (selectedType) params.set('source_type', selectedType);
     if (dateFrom) params.set('date_from', dateFrom);
@@ -253,25 +287,37 @@ function App() {
     return `/api/items?${params}`;
   }
 
-  function loadItems(offset, append = false) {
+  function loadItems(nextPage) {
     setItemsLoading(true);
     setError(null);
-    apiGet(buildItemsPath(offset))
+    apiGet(buildItemsPath(nextPage))
       .then((data) => {
-        setItems((current) => (append ? [...current, ...data] : data));
-        setItemsOffset(offset + data.length);
-        setHasMoreItems(data.length === ITEMS_PAGE_SIZE);
-        if (!append) setActiveItemId(data[0]?.id || null);
+        setItems(data);
+        setHasNextPage(data.length === ITEMS_PAGE_SIZE);
+        setActiveItemId(data[0]?.id || null);
       })
       .catch((err) => setError(err.message))
       .finally(() => setItemsLoading(false));
   }
 
   useEffect(() => {
+    setPage(1);
+  }, [selectedSource, selectedType, dateFrom, dateTo]);
+
+  useEffect(() => {
     setActiveItem(null);
     setSimilarItems([]);
-    loadItems(0, false);
-  }, [selectedSource, selectedType, dateFrom, dateTo]);
+    loadItems(page);
+  }, [page, selectedSource, selectedType, dateFrom, dateTo]);
+
+  useEffect(() => {
+    Promise.all([apiGet('/api/keywords/daily'), apiGet('/api/keywords/five-days')])
+      .then(([daily, fiveDays]) => {
+        setDailyKeywords(daily);
+        setFiveDaysKeywords(fiveDays);
+      })
+      .catch((err) => setError(err.message));
+  }, []);
 
   useEffect(() => {
     if (!activeItemId) return;
@@ -295,12 +341,13 @@ function App() {
         {(itemsLoading || detailLoading) && <div className="status">Загрузка…</div>}
         {error && <div className="error">{error}</div>}
         <NewsGrid items={items} activeItemId={activeItemId} onSelect={setActiveItemId} />
-        {hasMoreItems && <button className="load-more" disabled={itemsLoading} onClick={() => loadItems(itemsOffset, true)}>{itemsLoading ? 'Загрузка…' : 'Загрузить ещё'}</button>}
+        <Pagination page={page} hasNextPage={hasNextPage} loading={itemsLoading} onPageChange={setPage} />
       </aside>
       <section className="content-pane">
         <PublicationViewer item={activeItem} />
         <SimilarItems items={similarItems} loading={detailLoading} onSelect={setActiveItemId} />
       </section>
+      <AnalyticsPane dailyKeywords={dailyKeywords} fiveDaysKeywords={fiveDaysKeywords} />
     </main>
   );
 }

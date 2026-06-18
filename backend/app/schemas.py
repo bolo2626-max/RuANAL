@@ -33,6 +33,12 @@ class SimilarItem(BaseModel):
     grouped_id: str | None = None
     content_type: str | None = None
     media_count: int | None = None
+    relevance: float | None = None
+
+
+class Keyword(BaseModel):
+    word: str
+    count: int
 
 
 class ItemDetail(BaseModel):

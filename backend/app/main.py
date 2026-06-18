@@ -1,4 +1,6 @@
 import json
+import re
+from collections import Counter
 from pathlib import Path
 from typing import Any
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -8,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from .config import get_settings
 from .db import get_db
-from .schemas import ItemDetail, ItemList, SimilarItem, Source
+from .schemas import ItemDetail, ItemList, Keyword, SimilarItem, Source
 
 settings = get_settings()
 app = FastAPI(title="RuANAL Dashboard API", version="0.1.0")
@@ -28,6 +30,25 @@ if MEDIA_RU_DIR.exists():
 
 if MEDIA_UA_DIR.exists():
     app.mount("/media_ua", StaticFiles(directory=str(MEDIA_UA_DIR)), name="media_ua")
+
+
+RUSSIAN_STOP_WORDS = {
+    "а", "без", "более", "больше", "будет", "будто", "бы", "был", "была", "были", "было",
+    "быть", "в", "вам", "вас", "вдруг", "ведь", "во", "вот", "впрочем", "все", "всегда",
+    "всего", "всех", "всю", "вы", "где", "да", "даже", "два", "для", "до", "другой",
+    "его", "ее", "ей", "ему", "если", "есть", "еще", "же", "за", "зачем", "здесь", "и",
+    "из", "или", "им", "иногда", "их", "к", "как", "какая", "какой", "когда", "конечно",
+    "кто", "куда", "ли", "лучше", "между", "меня", "мне", "много", "может", "можно",
+    "мой", "моя", "мы", "на", "над", "надо", "наконец", "нас", "не", "него", "нее", "ней",
+    "нельзя", "нет", "ни", "нибудь", "никогда", "ним", "них", "ничего", "но", "ну", "о",
+    "об", "один", "он", "она", "они", "оно", "опять", "от", "перед", "по", "под", "после",
+    "потом", "потому", "почти", "при", "про", "раз", "разве", "с", "сам", "свое", "свою",
+    "себе", "себя", "сейчас", "со", "совсем", "так", "такой", "там", "тебя", "тем", "теперь",
+    "то", "тогда", "того", "тоже", "только", "том", "тот", "три", "тут", "ты", "у", "уж",
+    "уже", "хоть", "чего", "чей", "чем", "через", "что", "чтоб", "чтобы", "чуть", "эти",
+    "этого", "этой", "этом", "этот", "эту", "я", "это", "как", "также", "которые", "который",
+}
+WORD_RE = re.compile(r"[0-9A-Za-zА-Яа-яЁёІіЇїЄєҐґ]+")
 
 
 def _parse_json(value: Any) -> Any:
@@ -84,7 +105,7 @@ def get_items(
         FROM content_items_ru
         WHERE (:source_name IS NULL OR source_name = :source_name)
           AND (:source_type IS NULL OR source_type = :source_type)
-          AND (:date_from IS NULL OR published_at >= :date_from)
+          AND (:date_from IS NULL OR published_at >= CONCAT(:date_from, ' 00:00:00'))
           AND (:date_to IS NULL OR published_at < DATE_ADD(:date_to, INTERVAL 1 DAY))
         ORDER BY published_at DESC, id DESC
         LIMIT :limit OFFSET :offset
@@ -119,7 +140,7 @@ def get_item(item_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
 @app.get("/api/items/{item_id}/similar", response_model=list[SimilarItem])
 def get_similar_items(item_id: int, db: Session = Depends(get_db)) -> list[dict[str, Any]]:
     current = db.execute(text("""
-        SELECT id, grouped_id, content_hash, source_name
+        SELECT id, title, text, source_name, published_at, content_hash, grouped_id
         FROM content_items_ru
         WHERE id = :id
     """), {"id": item_id}).fetchone()
@@ -127,41 +148,75 @@ def get_similar_items(item_id: int, db: Session = Depends(get_db)) -> list[dict[
         raise HTTPException(status_code=404, detail="Item not found")
 
     current_data = _row_dict(current)
+    search_text = f"{current_data.get('title') or ''} {current_data.get('text') or ''}".strip()
     base_select = """
         SELECT id, source_type, source_name, title, LEFT(text, 300) AS text_preview,
                url, published_at, grouped_id, content_type, media_count
         FROM content_items_ru
     """
 
-    if current_data.get("grouped_id"):
-        rows = db.execute(text(base_select + """
-            WHERE grouped_id = :grouped_id AND id != :id
-            ORDER BY published_at DESC, id DESC
+    if search_text:
+        rows = db.execute(text("""
+            SELECT id, source_type, source_name, title, LEFT(text, 300) AS text_preview,
+                   url, published_at, grouped_id, content_type, media_count,
+                   MATCH(title, text) AGAINST(:search_text IN NATURAL LANGUAGE MODE) AS relevance
+            FROM content_items_ru
+            WHERE id != :id
+              AND MATCH(title, text) AGAINST(:search_text IN NATURAL LANGUAGE MODE)
+            ORDER BY relevance DESC, published_at DESC
             LIMIT 20
-        """), {"grouped_id": current_data["grouped_id"], "id": item_id}).fetchall()
-        return [_row_dict(row) for row in rows]
-
-    if current_data.get("content_hash"):
-        rows = db.execute(text(base_select + """
-            WHERE content_hash = :content_hash AND id != :id
-            ORDER BY published_at DESC, id DESC
-            LIMIT 20
-        """), {"content_hash": current_data["content_hash"], "id": item_id}).fetchall()
+        """), {"search_text": search_text, "id": item_id}).fetchall()
         if rows:
             return [_row_dict(row) for row in rows]
 
-    if current_data.get("source_name"):
-        rows = db.execute(text(base_select + """
-            WHERE source_name = :source_name AND id != :id
+    fallback_queries = [
+        ("content_hash", current_data.get("content_hash")),
+        ("grouped_id", current_data.get("grouped_id")),
+        ("source_name", current_data.get("source_name")),
+    ]
+    for column, value in fallback_queries:
+        if not value:
+            continue
+        rows = db.execute(text(base_select + f"""
+            WHERE {column} = :value AND id != :id
             ORDER BY published_at DESC, id DESC
             LIMIT 20
-        """), {"source_name": current_data.get("source_name"), "id": item_id}).fetchall()
+        """), {"value": value, "id": item_id}).fetchall()
         if rows:
-            return [_row_dict(row) for row in rows]
+            return [dict(_row_dict(row), relevance=None) for row in rows]
 
     rows = db.execute(text(base_select + """
         WHERE id != :id
         ORDER BY published_at DESC, id DESC
         LIMIT 20
     """), {"id": item_id}).fetchall()
-    return [_row_dict(row) for row in rows]
+    return [dict(_row_dict(row), relevance=None) for row in rows]
+
+
+def _keyword_counts(rows: list[Any]) -> list[dict[str, Any]]:
+    counter: Counter[str] = Counter()
+    for row in rows:
+        data = _row_dict(row)
+        raw_text = f"{data.get('title') or ''} {data.get('text') or ''}".lower()
+        words = WORD_RE.findall(raw_text)
+        counter.update(word for word in words if len(word) >= 4 and word not in RUSSIAN_STOP_WORDS)
+    return [{"word": word, "count": count} for word, count in counter.most_common(50)]
+
+
+def _get_keywords(where_clause: str, db: Session) -> list[dict[str, Any]]:
+    rows = db.execute(text(f"""
+        SELECT title, text
+        FROM content_items_ru
+        WHERE {where_clause}
+    """)).fetchall()
+    return _keyword_counts(rows)
+
+
+@app.get("/api/keywords/daily", response_model=list[Keyword])
+def get_daily_keywords(db: Session = Depends(get_db)) -> list[dict[str, Any]]:
+    return _get_keywords("published_at >= CURDATE() AND published_at < DATE_ADD(CURDATE(), INTERVAL 1 DAY)", db)
+
+
+@app.get("/api/keywords/five-days", response_model=list[Keyword])
+def get_five_days_keywords(db: Session = Depends(get_db)) -> list[dict[str, Any]]:
+    return _get_keywords("published_at >= DATE_SUB(NOW(), INTERVAL 5 DAY)", db)
