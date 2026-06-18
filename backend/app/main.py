@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from .config import get_settings
 from .db import get_db
-from .schemas import ItemDetail, ItemList, Keyword, SimilarItem, Source
+from .schemas import ItemDetail, ItemList, Keyword, SimilarItem, Source, Tag
 from fastapi.staticfiles import StaticFiles
 
 settings = get_settings()
@@ -53,6 +53,7 @@ RUSSIAN_STOP_WORDS = {
     "этого", "этой", "этом", "этот", "эту", "я", "это", "как", "также", "которые", "который",
 }
 WORD_RE = re.compile(r"[0-9A-Za-zА-Яа-яЁёІіЇїЄєҐґ]+")
+ENTITY_RE = re.compile(r"(?<![0-9A-Za-zА-Яа-яЁёІіЇїЄєҐґ])(?:[А-ЯЁІЇЄҐ][а-яёіїєґ]{2,}|[А-ЯЁІЇЄҐ]{2,})(?![0-9A-Za-zА-Яа-яЁёІіЇїЄєҐґ])")
 
 
 def _parse_json(value: Any) -> Any:
@@ -84,43 +85,79 @@ def get_sources(db: Session = Depends(get_db)) -> list[dict[str, Any]]:
     return [_row_dict(row) for row in rows]
 
 
+ITEM_LIST_COLUMNS = """
+        id,
+        source_type,
+        source_name,
+        title,
+        LEFT(text, 300) AS text_preview,
+        url,
+        published_at,
+        grouped_id,
+        content_type,
+        media_count
+"""
+
+
+def _items_filter_clause(keyword_mode: str | None = None) -> str:
+    clauses = [
+        "(:source_name IS NULL OR source_name = :source_name)",
+        "(:source_type IS NULL OR source_type = :source_type)",
+        "(:date_from IS NULL OR published_at >= CONCAT(:date_from, ' 00:00:00'))",
+        "(:date_to IS NULL OR published_at < DATE_ADD(:date_to, INTERVAL 1 DAY))",
+    ]
+    if keyword_mode == "fulltext":
+        clauses.append("MATCH(title, text) AGAINST(:keyword IN NATURAL LANGUAGE MODE)")
+    elif keyword_mode == "like":
+        clauses.append("(title LIKE :keyword_like OR text LIKE :keyword_like)")
+    return " AND ".join(clauses)
+
+
+def _fetch_items(db: Session, params: dict[str, Any], keyword_mode: str | None = None) -> list[Any]:
+    relevance_select = ""
+    relevance_order = ""
+    if keyword_mode == "fulltext":
+        relevance_select = ", MATCH(title, text) AGAINST(:keyword IN NATURAL LANGUAGE MODE) AS relevance"
+        relevance_order = "relevance DESC, "
+    return db.execute(text(f"""
+        SELECT
+        {ITEM_LIST_COLUMNS.rstrip()}
+        {relevance_select}
+        FROM content_items_ru
+        WHERE {_items_filter_clause(keyword_mode)}
+        ORDER BY {relevance_order}published_at DESC, id DESC
+        LIMIT :limit OFFSET :offset
+    """), params).fetchall()
+
+
 @app.get("/api/items", response_model=list[ItemList])
 def get_items(
     source_name: str | None = None,
     source_type: str | None = None,
-    date_from: str | None = None,
-    date_to: str | None = None,
+    date_from: str | None = Query(default=None, description="Start date in YYYY-MM-DD format"),
+    date_to: str | None = Query(default=None, description="End date in YYYY-MM-DD format"),
+    keyword: str | None = Query(default=None, description="Keyword or tag for full-text filtering"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:
-    rows = db.execute(text("""
-        SELECT
-            id,
-            source_type,
-            source_name,
-            title,
-            LEFT(text, 300) AS text_preview,
-            url,
-            published_at,
-            grouped_id,
-            content_type,
-            media_count
-        FROM content_items_ru
-        WHERE (:source_name IS NULL OR source_name = :source_name)
-          AND (:source_type IS NULL OR source_type = :source_type)
-          AND (:date_from IS NULL OR published_at >= CONCAT(:date_from, ' 00:00:00'))
-          AND (:date_to IS NULL OR published_at < DATE_ADD(:date_to, INTERVAL 1 DAY))
-        ORDER BY published_at DESC, id DESC
-        LIMIT :limit OFFSET :offset
-    """), {
+    clean_keyword = keyword.strip() if keyword else None
+    params = {
         "source_name": source_name,
         "source_type": source_type,
         "date_from": date_from,
         "date_to": date_to,
+        "keyword": clean_keyword,
+        "keyword_like": f"%{clean_keyword}%" if clean_keyword else None,
         "limit": limit,
         "offset": offset,
-    }).fetchall()
+    }
+    if clean_keyword:
+        rows = _fetch_items(db, params, "fulltext")
+        if not rows:
+            rows = _fetch_items(db, params, "like")
+    else:
+        rows = _fetch_items(db, params)
     return [_row_dict(row) for row in rows]
 
 
@@ -207,6 +244,30 @@ def _keyword_counts(rows: list[Any]) -> list[dict[str, Any]]:
     return [{"word": word, "count": count} for word, count in counter.most_common(50)]
 
 
+def _tag_counts(rows: list[Any]) -> list[dict[str, Any]]:
+    word_counter: Counter[str] = Counter()
+    entity_counter: Counter[str] = Counter()
+    for row in rows:
+        data = _row_dict(row)
+        raw_text = f"{data.get('title') or ''} {data.get('text') or ''}"
+        words = WORD_RE.findall(raw_text.lower())
+        word_counter.update(word for word in words if len(word) >= 4 and word not in RUSSIAN_STOP_WORDS)
+        entity_counter.update(entity for entity in ENTITY_RE.findall(raw_text) if entity.lower() not in RUSSIAN_STOP_WORDS)
+
+    tags_by_key: dict[str, dict[str, Any]] = {}
+    for tag, count in word_counter.items():
+        tags_by_key[tag.lower()] = {"tag": tag, "count": count, "type": "word"}
+    for tag, count in entity_counter.items():
+        key = tag.lower()
+        current = tags_by_key.get(key)
+        if current is None or count >= current["count"]:
+            tags_by_key[key] = {"tag": tag, "count": count, "type": "entity"}
+        elif current["type"] == "word":
+            current["type"] = "entity"
+
+    return sorted(tags_by_key.values(), key=lambda entry: (-entry["count"], entry["tag"].lower()))[:80]
+
+
 def _get_keywords(where_clause: str, db: Session) -> list[dict[str, Any]]:
     rows = db.execute(text(f"""
         SELECT title, text
@@ -224,3 +285,22 @@ def get_daily_keywords(db: Session = Depends(get_db)) -> list[dict[str, Any]]:
 @app.get("/api/keywords/five-days", response_model=list[Keyword])
 def get_five_days_keywords(db: Session = Depends(get_db)) -> list[dict[str, Any]]:
     return _get_keywords("published_at >= DATE_SUB(NOW(), INTERVAL 5 DAY)", db)
+
+
+def _get_tags(where_clause: str, db: Session) -> list[dict[str, Any]]:
+    rows = db.execute(text(f"""
+        SELECT title, text
+        FROM content_items_ru
+        WHERE {where_clause}
+    """)).fetchall()
+    return _tag_counts(rows)
+
+
+@app.get("/api/tags/daily", response_model=list[Tag])
+def get_daily_tags(db: Session = Depends(get_db)) -> list[dict[str, Any]]:
+    return _get_tags("published_at >= CURDATE() AND published_at < DATE_ADD(CURDATE(), INTERVAL 1 DAY)", db)
+
+
+@app.get("/api/tags/five-days", response_model=list[Tag])
+def get_five_days_tags(db: Session = Depends(get_db)) -> list[dict[str, Any]]:
+    return _get_tags("published_at >= DATE_SUB(NOW(), INTERVAL 5 DAY)", db)

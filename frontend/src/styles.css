@@ -64,3 +64,16 @@ time { color: #64748b; font-size: 12px; }
 .pagination button:hover:not(:disabled) { background: #1d4ed8; }
 @media (min-width: 901px) { .app-shell { grid-template-columns: minmax(320px, 30%) minmax(0, 1fr) minmax(240px, 280px); } }
 @media (max-width: 900px) { .analytics-pane { height: auto; overflow: visible; border-left: 0; border-top: 1px solid #dce3eb; } }
+.sidebar { display: flex; flex-direction: column; overflow: hidden; }
+.sidebar-sticky { position: sticky; top: 0; z-index: 2; flex: 0 0 auto; padding-bottom: 4px; background: #ffffff; }
+.sidebar .news-grid { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-right: 4px; }
+.active-tag-filter { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; padding: 10px 12px; border-radius: 12px; background: #dbeafe; color: #1e3a8a; font-weight: 800; }
+.active-tag-filter button { border: 0; border-radius: 999px; background: #bfdbfe; color: #1e3a8a; cursor: pointer; font-weight: 900; }
+.tag-cloud { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.tag-cloud-item { border: 1px solid #ddd6fe; border-radius: 999px; padding: 5px 9px; background: #f5f3ff; color: #5b21b6; cursor: pointer; font-weight: 800; line-height: 1.1; transition: 0.15s ease; }
+.tag-cloud-item.entity { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; }
+.tag-cloud-item.word { border-color: #ddd6fe; background: #f5f3ff; color: #6d28d9; }
+.tag-cloud-item small { margin-left: 3px; color: #64748b; font-size: 0.72em; }
+.tag-cloud-item:hover, .tag-cloud-item.active { transform: translateY(-1px); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14); }
+.tag-cloud-item.active { border-color: #2563eb; background: #dbeafe; color: #1e40af; }
+@media (max-width: 900px) { .sidebar { overflow: visible; } .sidebar-sticky { position: static; } .sidebar .news-grid { overflow: visible; } }
