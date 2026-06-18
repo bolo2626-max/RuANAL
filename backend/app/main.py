@@ -54,6 +54,44 @@ RUSSIAN_STOP_WORDS = {
 }
 WORD_RE = re.compile(r"[0-9A-Za-zА-Яа-яЁёІіЇїЄєҐґ]+")
 ENTITY_RE = re.compile(r"(?<![0-9A-Za-zА-Яа-яЁёІіЇїЄєҐґ])(?:[А-ЯЁІЇЄҐ][а-яёіїєґ]{2,}|[А-ЯЁІЇЄҐ]{2,})(?![0-9A-Za-zА-Яа-яЁёІіЇїЄєҐґ])")
+SENTENCE_START_RE = re.compile(r"(?:^|[.!?…]\s+)([А-ЯЁІЇЄҐ][а-яёіїєґ]+|[А-ЯЁІЇЄҐ]{2,})")
+
+TAG_BLACKLIST = {
+    "подписаться", "читать", "подробнее", "канал", "канале", "telegram", "ссылка", "ссылки",
+    "сегодня", "завтра", "вчера", "также", "далее", "теперь", "сейчас",
+    "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря", "января", "февраля", "марта", "апреля", "мая",
+    "понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье",
+    "года", "год", "день", "дней", "время", "раз", "уже",
+    "сообщил", "сообщила", "сообщили", "сообщает", "сообщают", "заявил", "заявила", "заявили",
+    "область", "области", "района", "район", "округ", "округа", "город", "города",
+    "жители", "жителей", "человек", "людей", "работы", "работа", "данные", "информация",
+    "новый", "новая", "новые", "первый", "первые",
+}
+SHORT_ENTITY_WHITELIST = {"ООН", "НАТО", "США", "РФ", "ЕС", "ВСУ", "БПЛА", "ПВО", "КНР", "МВД", "ФСБ", "МЧС"}
+TAG_STOP_WORDS = RUSSIAN_STOP_WORDS | TAG_BLACKLIST
+
+
+def _is_allowed_word_tag(word: str) -> bool:
+    return len(word) >= 4 and word not in TAG_STOP_WORDS
+
+
+def _is_sentence_start_blacklisted(text: str, start: int, value: str) -> bool:
+    tag_key = value.lower()
+    if tag_key not in TAG_STOP_WORDS:
+        return False
+    return any(match.start(1) == start and match.group(1).lower() == tag_key for match in SENTENCE_START_RE.finditer(text))
+
+
+def _is_allowed_entity_tag(text: str, match: re.Match[str]) -> bool:
+    value = match.group(0)
+    key = value.lower()
+    if key in TAG_STOP_WORDS:
+        return False
+    if _is_sentence_start_blacklisted(text, match.start(), value):
+        return False
+    if value.isupper() and len(value) < 4 and value not in SHORT_ENTITY_WHITELIST:
+        return False
+    return True
 
 
 def _parse_json(value: Any) -> Any:
@@ -240,7 +278,7 @@ def _keyword_counts(rows: list[Any]) -> list[dict[str, Any]]:
         data = _row_dict(row)
         raw_text = f"{data.get('title') or ''} {data.get('text') or ''}".lower()
         words = WORD_RE.findall(raw_text)
-        counter.update(word for word in words if len(word) >= 4 and word not in RUSSIAN_STOP_WORDS)
+        counter.update(word for word in words if _is_allowed_word_tag(word))
     return [{"word": word, "count": count} for word, count in counter.most_common(50)]
 
 
@@ -251,8 +289,8 @@ def _tag_counts(rows: list[Any]) -> list[dict[str, Any]]:
         data = _row_dict(row)
         raw_text = f"{data.get('title') or ''} {data.get('text') or ''}"
         words = WORD_RE.findall(raw_text.lower())
-        word_counter.update(word for word in words if len(word) >= 4 and word not in RUSSIAN_STOP_WORDS)
-        entity_counter.update(entity for entity in ENTITY_RE.findall(raw_text) if entity.lower() not in RUSSIAN_STOP_WORDS)
+        word_counter.update(word for word in words if _is_allowed_word_tag(word))
+        entity_counter.update(match.group(0) for match in ENTITY_RE.finditer(raw_text) if _is_allowed_entity_tag(raw_text, match))
 
     tags_by_key: dict[str, dict[str, Any]] = {}
     for tag, count in word_counter.items():
