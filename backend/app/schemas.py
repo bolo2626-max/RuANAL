@@ -17,7 +17,7 @@ class ItemList(BaseModel):
     text_preview: str | None
     url: str | None
     published_at: datetime | None
-    grouped_id: str | None
+    grouped_id: int | None
     content_type: str | None
     media_count: int | None
 
@@ -30,7 +30,7 @@ class SimilarItem(BaseModel):
     text_preview: str | None
     url: str | None
     published_at: datetime | None
-    grouped_id: str | None = None
+    grouped_id: int | None = None
     content_type: str | None = None
     media_count: int | None = None
 
@@ -46,7 +46,7 @@ class ItemDetail(BaseModel):
     media_count: int | None
     published_at: datetime | None
     fetched_at: datetime | None
-    grouped_id: str | None
+    grouped_id: int | None
     metadata: Any | None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)

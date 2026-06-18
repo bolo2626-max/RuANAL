@@ -1,14 +1,14 @@
 import json
-from pathlib import Path
 from typing import Any
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from .config import get_settings
 from .db import get_db
 from .schemas import ItemDetail, ItemList, SimilarItem, Source
+from fastapi.staticfiles import StaticFiles
+
 
 settings = get_settings()
 app = FastAPI(title="RuANAL Dashboard API", version="0.1.0")
@@ -20,14 +20,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-MEDIA_RU_DIR = Path("/home/bolo/PROJECTS/PY_PROJECTS/Teleparser/media_ru")
-MEDIA_UA_DIR = Path("/home/bolo/PROJECTS/PY_PROJECTS/Teleparser/media_ua")
+app.mount(
+    "/media_ru",
+    StaticFiles(directory="/home/bolo/PROJECTS/PY_PROJECTS/Teleparser/media_ru"),
+    name="media_ru"
+)
 
-if MEDIA_RU_DIR.exists():
-    app.mount("/media_ru", StaticFiles(directory=str(MEDIA_RU_DIR)), name="media_ru")
+app.mount(
+    "/media_ua",
+    StaticFiles(directory="/home/bolo/PROJECTS/PY_PROJECTS/Teleparser/media_ua"),
+    name="media_ua"
+)
 
-if MEDIA_UA_DIR.exists():
-    app.mount("/media_ua", StaticFiles(directory=str(MEDIA_UA_DIR)), name="media_ua")
 
 
 def _parse_json(value: Any) -> Any:
@@ -63,8 +67,6 @@ def get_sources(db: Session = Depends(get_db)) -> list[dict[str, Any]]:
 def get_items(
     source_name: str | None = None,
     source_type: str | None = None,
-    date_from: str | None = Query(default=None, description="Start date in YYYY-MM-DD format"),
-    date_to: str | None = Query(default=None, description="End date in YYYY-MM-DD format"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
@@ -84,15 +86,11 @@ def get_items(
         FROM content_items_ru
         WHERE (:source_name IS NULL OR source_name = :source_name)
           AND (:source_type IS NULL OR source_type = :source_type)
-          AND (:date_from IS NULL OR published_at >= :date_from)
-          AND (:date_to IS NULL OR published_at < DATE_ADD(:date_to, INTERVAL 1 DAY))
         ORDER BY published_at DESC, id DESC
         LIMIT :limit OFFSET :offset
     """), {
         "source_name": source_name,
         "source_type": source_type,
-        "date_from": date_from,
-        "date_to": date_to,
         "limit": limit,
         "offset": offset,
     }).fetchall()
