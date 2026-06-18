@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
@@ -227,23 +227,43 @@ function SimilarItems({ items, loading, onSelect }) {
   );
 }
 
-function KeywordTags({ title, keywords }) {
+function TagCloud({ title, tags, activeKeyword, onSelectTag }) {
+  const counts = tags.map((entry) => entry.count);
+  const minCount = Math.min(...counts, 0);
+  const maxCount = Math.max(...counts, 0);
+
+  function getTagSize(count) {
+    if (maxCount <= minCount) return 1;
+    return 0.9 + ((count - minCount) / (maxCount - minCount)) * 0.9;
+  }
+
   return (
     <section className="keyword-section">
       <h2>{title}</h2>
-      {keywords.length === 0 && <p className="muted">Нет данных.</p>}
-      <div className="keyword-tags">
-        {keywords.map((entry) => <span key={entry.word} className="keyword-tag">{entry.word} ({entry.count})</span>)}
+      {tags.length === 0 && <p className="muted">Нет данных.</p>}
+      <div className="tag-cloud">
+        {tags.map((entry) => (
+          <button
+            key={`${entry.type}-${entry.tag}`}
+            type="button"
+            className={`tag-cloud-item ${entry.type === 'entity' ? 'entity' : 'word'} ${activeKeyword === entry.tag ? 'active' : ''}`}
+            style={{ fontSize: `${getTagSize(entry.count)}rem` }}
+            onClick={() => onSelectTag(entry.tag)}
+            title={entry.type === 'entity' ? 'Потенциальная сущность' : 'Частотное слово'}
+          >
+            <span>{entry.tag}</span> <small>{entry.count}</small>
+          </button>
+        ))}
       </div>
     </section>
   );
 }
 
-function AnalyticsPane({ dailyKeywords, fiveDaysKeywords }) {
+function AnalyticsPane({ dailyTags, fiveDaysTags, activeKeyword, onSelectTag }) {
   return (
     <aside className="analytics-pane">
-      <KeywordTags title="Частые слова за день" keywords={dailyKeywords} />
-      <KeywordTags title="Частые слова за 5 дней" keywords={fiveDaysKeywords} />
+      <TagCloud title="Облако тегов за день" tags={dailyTags} activeKeyword={activeKeyword} onSelectTag={onSelectTag} />
+      <TagCloud title="Облако тегов за 5 дней" tags={fiveDaysTags} activeKeyword={activeKeyword} onSelectTag={onSelectTag} />
     </aside>
   );
 }
@@ -270,8 +290,10 @@ function App() {
   const [similarItems, setSimilarItems] = useState([]);
   const [page, setPage] = useState(1);
   const [hasNextPage, setHasNextPage] = useState(false);
-  const [dailyKeywords, setDailyKeywords] = useState([]);
-  const [fiveDaysKeywords, setFiveDaysKeywords] = useState([]);
+  const [dailyTags, setDailyTags] = useState([]);
+  const [fiveDaysTags, setFiveDaysTags] = useState([]);
+  const [activeKeyword, setActiveKeyword] = useState(null);
+  const contentPaneRef = useRef(null);
   const [itemsLoading, setItemsLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -284,6 +306,7 @@ function App() {
     if (selectedType) params.set('source_type', selectedType);
     if (dateFrom) params.set('date_from', dateFrom);
     if (dateTo) params.set('date_to', dateTo);
+    if (activeKeyword) params.set('keyword', activeKeyword);
     return `/api/items?${params}`;
   }
 
@@ -302,25 +325,27 @@ function App() {
 
   useEffect(() => {
     setPage(1);
-  }, [selectedSource, selectedType, dateFrom, dateTo]);
+  }, [selectedSource, selectedType, dateFrom, dateTo, activeKeyword]);
 
   useEffect(() => {
     setActiveItem(null);
     setSimilarItems([]);
     loadItems(page);
-  }, [page, selectedSource, selectedType, dateFrom, dateTo]);
+  }, [page, selectedSource, selectedType, dateFrom, dateTo, activeKeyword]);
 
   useEffect(() => {
-    Promise.all([apiGet('/api/keywords/daily'), apiGet('/api/keywords/five-days')])
+    Promise.all([apiGet('/api/tags/daily'), apiGet('/api/tags/five-days')])
       .then(([daily, fiveDays]) => {
-        setDailyKeywords(daily);
-        setFiveDaysKeywords(fiveDays);
+        setDailyTags(daily);
+        setFiveDaysTags(fiveDays);
       })
       .catch((err) => setError(err.message));
   }, []);
 
   useEffect(() => {
     if (!activeItemId) return;
+    contentPaneRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    contentPaneRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     setDetailLoading(true);
     setError(null);
     Promise.all([apiGet(`/api/items/${activeItemId}`), apiGet(`/api/items/${activeItemId}/similar`)])
@@ -336,18 +361,26 @@ function App() {
   return (
     <main className="app-shell">
       <aside className="sidebar">
-        <div className="brand"><h1>RuANAL</h1><span>Media reader MVP</span></div>
-        <SourceFilter sources={sources} selectedSource={selectedSource} selectedType={selectedType} dateFrom={dateFrom} dateTo={dateTo} onChange={({ sourceType, sourceName }) => { setSelectedType(sourceType); setSelectedSource(sourceName); }} onDateChange={({ dateFrom: nextDateFrom, dateTo: nextDateTo }) => { setDateFrom(nextDateFrom); setDateTo(nextDateTo); }} />
-        {(itemsLoading || detailLoading) && <div className="status">Загрузка…</div>}
-        {error && <div className="error">{error}</div>}
+        <div className="sidebar-sticky">
+          <div className="brand"><h1>RuANAL</h1><span>Media reader MVP</span></div>
+          <SourceFilter sources={sources} selectedSource={selectedSource} selectedType={selectedType} dateFrom={dateFrom} dateTo={dateTo} onChange={({ sourceType, sourceName }) => { setSelectedType(sourceType); setSelectedSource(sourceName); }} onDateChange={({ dateFrom: nextDateFrom, dateTo: nextDateTo }) => { setDateFrom(nextDateFrom); setDateTo(nextDateTo); }} />
+          {activeKeyword && (
+            <div className="active-tag-filter">
+              Тег: {activeKeyword}
+              <button type="button" onClick={() => setActiveKeyword(null)} aria-label="Очистить фильтр по тегу">✕</button>
+            </div>
+          )}
+          {(itemsLoading || detailLoading) && <div className="status">Загрузка…</div>}
+          {error && <div className="error">{error}</div>}
+        </div>
         <NewsGrid items={items} activeItemId={activeItemId} onSelect={setActiveItemId} />
         <Pagination page={page} hasNextPage={hasNextPage} loading={itemsLoading} onPageChange={setPage} />
       </aside>
-      <section className="content-pane">
+      <section className="content-pane" ref={contentPaneRef}>
         <PublicationViewer item={activeItem} />
         <SimilarItems items={similarItems} loading={detailLoading} onSelect={setActiveItemId} />
       </section>
-      <AnalyticsPane dailyKeywords={dailyKeywords} fiveDaysKeywords={fiveDaysKeywords} />
+      <AnalyticsPane dailyTags={dailyTags} fiveDaysTags={fiveDaysTags} activeKeyword={activeKeyword} onSelectTag={(tag) => { setActiveKeyword(tag); setPage(1); }} />
     </main>
   );
 }
