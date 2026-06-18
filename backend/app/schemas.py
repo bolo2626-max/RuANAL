@@ -41,6 +41,12 @@ class Keyword(BaseModel):
     count: int
 
 
+class Tag(BaseModel):
+    tag: str
+    count: int
+    type: str
+
+
 class ItemDetail(BaseModel):
     id: int
     source_type: str | None
