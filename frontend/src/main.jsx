@@ -119,7 +119,7 @@ function MediaBlock({ item }) {
   return null;
 }
 
-function SourceFilter({ sources, selectedSource, selectedType, dateFrom, dateTo, onChange, onDateChange }) {
+function SourceFilter({ sources, selectedSource, selectedType, dateFrom, dateTo, searchQuery, onChange, onDateChange, onSearchChange, onSearchClear }) {
   const sourceTypes = useMemo(() => [...new Set(sources.map((source) => source.source_type).filter(Boolean))], [sources]);
   const sourceNames = useMemo(
     () => sources.filter((source) => !selectedType || source.source_type === selectedType),
@@ -128,6 +128,21 @@ function SourceFilter({ sources, selectedSource, selectedType, dateFrom, dateTo,
 
   return (
     <section className="filter-panel">
+      <label>
+        Поиск
+        <div className="search-filter-row">
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder="Поиск по материалам..."
+            aria-label="Поиск по материалам"
+          />
+          {searchQuery && (
+            <button type="button" onClick={onSearchClear} aria-label="Очистить поиск">✕</button>
+          )}
+        </div>
+      </label>
       <label>
         Тип источника
         <select value={selectedType || ''} onChange={(event) => onChange({ sourceType: event.target.value || null, sourceName: null })}>
@@ -293,6 +308,7 @@ function App() {
   const [dailyTags, setDailyTags] = useState([]);
   const [fiveDaysTags, setFiveDaysTags] = useState([]);
   const [activeKeyword, setActiveKeyword] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
   const contentPaneRef = useRef(null);
   const itemsRequestIdRef = useRef(0);
   const [itemsLoading, setItemsLoading] = useState(false);
@@ -307,7 +323,9 @@ function App() {
     if (selectedType) params.set('source_type', selectedType);
     if (dateFrom) params.set('date_from', dateFrom);
     if (dateTo) params.set('date_to', dateTo);
-    if (activeKeyword) params.set('keyword', activeKeyword);
+    const cleanSearchQuery = searchQuery.trim();
+    const effectiveKeyword = cleanSearchQuery || activeKeyword;
+    if (effectiveKeyword) params.set('keyword', effectiveKeyword);
     return `/api/items?${params}`;
   }
 
@@ -335,7 +353,7 @@ function App() {
     setActiveItem(null);
     setSimilarItems([]);
     loadItems(page);
-  }, [page, selectedSource, selectedType, dateFrom, dateTo, activeKeyword]);
+  }, [page, selectedSource, selectedType, dateFrom, dateTo, activeKeyword, searchQuery]);
 
   useEffect(() => {
     Promise.all([apiGet('/api/tags/daily'), apiGet('/api/tags/five-days')])
@@ -362,13 +380,35 @@ function App() {
       .finally(() => setDetailLoading(false));
   }, [activeItemId]);
 
+  function handleSearchChange(nextSearchQuery) {
+    setSearchQuery(nextSearchQuery);
+    if (nextSearchQuery.trim()) setActiveKeyword(null);
+    setPage(1);
+  }
+
+  function handleSearchClear() {
+    setSearchQuery('');
+    setPage(1);
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-sticky">
           <div className="brand"><h1>RuANAL</h1><span>Media reader MVP</span></div>
-          <SourceFilter sources={sources} selectedSource={selectedSource} selectedType={selectedType} dateFrom={dateFrom} dateTo={dateTo} onChange={({ sourceType, sourceName }) => { setSelectedType(sourceType); setSelectedSource(sourceName); setPage(1); }} onDateChange={({ dateFrom: nextDateFrom, dateTo: nextDateTo }) => { setDateFrom(nextDateFrom); setDateTo(nextDateTo); setPage(1); }} />
-          {activeKeyword && (
+          <SourceFilter
+            sources={sources}
+            selectedSource={selectedSource}
+            selectedType={selectedType}
+            dateFrom={dateFrom}
+            dateTo={dateTo}
+            searchQuery={searchQuery}
+            onChange={({ sourceType, sourceName }) => { setSelectedType(sourceType); setSelectedSource(sourceName); setPage(1); }}
+            onDateChange={({ dateFrom: nextDateFrom, dateTo: nextDateTo }) => { setDateFrom(nextDateFrom); setDateTo(nextDateTo); setPage(1); }}
+            onSearchChange={handleSearchChange}
+            onSearchClear={handleSearchClear}
+          />
+          {activeKeyword && !searchQuery.trim() && (
             <div className="active-tag-filter">
               Тег: {activeKeyword}
               <button type="button" onClick={() => { setActiveKeyword(null); setPage(1); }} aria-label="Очистить фильтр по тегу">✕</button>
@@ -384,7 +424,7 @@ function App() {
         <PublicationViewer item={activeItem} />
         <SimilarItems items={similarItems} loading={detailLoading} onSelect={setActiveItemId} />
       </section>
-      <AnalyticsPane dailyTags={dailyTags} fiveDaysTags={fiveDaysTags} activeKeyword={activeKeyword} onSelectTag={(tag) => { setActiveKeyword(tag); setPage(1); }} />
+      <AnalyticsPane dailyTags={dailyTags} fiveDaysTags={fiveDaysTags} activeKeyword={searchQuery.trim() ? null : activeKeyword} onSelectTag={(tag) => { setSearchQuery(''); setActiveKeyword(tag); setPage(1); }} />
     </main>
   );
 }

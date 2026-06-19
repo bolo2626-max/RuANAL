@@ -2,7 +2,7 @@
 body { margin: 0; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f4f6f8; color: #172033; }
 button, select, input { font: inherit; }
 button:disabled { cursor: not-allowed; opacity: 0.65; }
-.app-shell { display: grid; grid-template-columns: minmax(320px, 34%) 1fr; height: 100vh; overflow: hidden; }
+.app-shell { display: grid; grid-template-columns: minmax(320px, 34%) minmax(0, 1fr); height: 100vh; overflow: hidden; }
 .sidebar, .content-pane { overflow-y: auto; height: 100vh; }
 .sidebar { border-right: 1px solid #dce3eb; background: #ffffff; padding: 14px; font-size: 14px; }
 .content-pane { padding: 18px; }
@@ -12,6 +12,10 @@ button:disabled { cursor: not-allowed; opacity: 0.65; }
 .filter-panel { display: grid; gap: 8px; margin-bottom: 10px; padding: 10px; border-radius: 14px; background: #eef3f8; }
 .filter-panel label { display: grid; gap: 4px; color: #415064; font-size: 12px; }
 .filter-panel select, .filter-panel input { width: 100%; min-height: 34px; padding: 6px 9px; border: 1px solid #cbd5e1; border-radius: 9px; background: #fff; }
+.search-filter-row { position: relative; display: flex; align-items: center; }
+.search-filter-row input { padding-right: 32px; }
+.search-filter-row button { position: absolute; right: 6px; width: 22px; height: 22px; border: 0; border-radius: 999px; background: #e2e8f0; color: #334155; cursor: pointer; font-size: 12px; font-weight: 900; line-height: 1; }
+.search-filter-row button:hover { background: #cbd5e1; color: #0f172a; }
 .date-filter-row { display: flex; gap: 8px; align-items: end; }
 .date-filter-row label { flex: 1 1 0; min-width: 0; }
 .news-grid { display: grid; gap: 8px; }
@@ -26,11 +30,13 @@ button:disabled { cursor: not-allowed; opacity: 0.65; }
 time { color: #64748b; font-size: 12px; }
 .media-badge { display: inline-block; margin-top: 5px; padding: 3px 7px; border-radius: 999px; background: #e0f2fe; color: #075985; font-size: 11px; font-weight: 700; }
 .news-card p, .similar-card p { margin: 6px 0 0; color: #4b5563; line-height: 1.35; }
-.publication { display: grid; gap: 16px; min-height: 68vh; }
-.publication header { padding: 18px; border-radius: 18px; background: #fff; border: 1px solid #d8e0ea; }
-.publication h1 { margin: 0 0 8px; font-size: clamp(22px, 3vw, 34px); }
-.publication-meta { color: #64748b; margin-bottom: 8px; }
+.publication { display: grid; gap: 12px; min-height: 68vh; }
+.publication header { padding: 12px 14px; border-radius: 16px; background: #fff; border: 1px solid #d8e0ea; }
+.publication h1 { margin: 0 0 6px; font-size: clamp(18px, 2.2vw, 26px); line-height: 1.2; }
+.publication-meta { color: #64748b; margin-bottom: 8px; font-size: 13px; }
 .publication a { color: #2563eb; }
+.publication header a { display: inline-flex; align-items: center; justify-content: center; padding: 6px 10px; border-radius: 10px; background: #2563eb; color: #fff; font-size: 13px; font-weight: 800; text-decoration: none; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12); transition: 0.15s ease; }
+.publication header a:hover { background: #1d4ed8; transform: translateY(-1px); box-shadow: 0 4px 10px rgba(37, 99, 235, 0.22); }
 .publication iframe { width: 100%; min-height: 62vh; border: 1px solid #d8e0ea; border-radius: 18px; background: #fff; }
 .fallback-content, .empty-state, .similar { border: 1px solid #d8e0ea; border-radius: 18px; background: #fff; padding: 20px; }
 .fallback-content p { white-space: pre-wrap; line-height: 1.6; }
@@ -62,15 +68,15 @@ time { color: #64748b; font-size: 12px; }
 .pagination button { padding: 7px 10px; border: 0; border-radius: 10px; background: #2563eb; color: #fff; cursor: pointer; font-weight: 700; }
 .pagination span { color: #415064; font-size: 12px; font-weight: 700; text-align: center; }
 .pagination button:hover:not(:disabled) { background: #1d4ed8; }
-@media (min-width: 901px) { .app-shell { grid-template-columns: minmax(320px, 30%) minmax(0, 1fr) minmax(240px, 280px); } }
+@media (min-width: 901px) { .app-shell { grid-template-columns: minmax(320px, 29%) minmax(0, 1fr) minmax(280px, 330px); } }
 @media (max-width: 900px) { .analytics-pane { height: auto; overflow: visible; border-left: 0; border-top: 1px solid #dce3eb; } }
 .sidebar { display: flex; flex-direction: column; overflow: hidden; }
 .sidebar-sticky { position: sticky; top: 0; z-index: 2; flex: 0 0 auto; padding-bottom: 4px; background: #ffffff; }
 .sidebar .news-grid { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-right: 4px; }
 .active-tag-filter { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 8px; padding: 7px 9px; border-radius: 10px; background: #dbeafe; color: #1e3a8a; font-weight: 800; }
 .active-tag-filter button { border: 0; border-radius: 999px; background: #bfdbfe; color: #1e3a8a; cursor: pointer; font-weight: 900; }
-.tag-cloud { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-.tag-cloud-item { border: 1px solid #ddd6fe; border-radius: 999px; padding: 3px 6px; background: #f5f3ff; color: #5b21b6; cursor: pointer; font-weight: 800; line-height: 1.05; transition: 0.15s ease; }
+.tag-cloud { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
+.tag-cloud-item { border: 1px solid #ddd6fe; border-radius: 999px; padding: 2px 5px; background: #f5f3ff; color: #5b21b6; cursor: pointer; font-weight: 800; line-height: 1; transition: 0.15s ease; }
 .tag-cloud-item.entity { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; }
 .tag-cloud-item.word { border-color: #ddd6fe; background: #f5f3ff; color: #6d28d9; }
 .tag-cloud-item small { margin-left: 3px; color: #64748b; font-size: 0.72em; }

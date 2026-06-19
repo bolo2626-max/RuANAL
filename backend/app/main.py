@@ -66,8 +66,15 @@ TAG_BLACKLIST = {
     "область", "области", "района", "район", "округ", "округа", "город", "города",
     "жители", "жителей", "человек", "людей", "работы", "работа", "данные", "информация",
     "новый", "новая", "новые", "первый", "первые",
+    "задачи", "задача", "объектов", "объекты", "объект", "облачно",
+    "сутки", "около", "течение", "данный", "данная", "данных",
+    "результате", "территории", "территория", "районе", "ситуация",
+    "ситуации", "месте", "место", "стороны", "сторона", "рамках",
+    "уровень", "уровне", "власти", "власть",
 }
 SHORT_ENTITY_WHITELIST = {"ООН", "НАТО", "США", "РФ", "ЕС", "ВСУ", "БПЛА", "ПВО", "КНР", "МВД", "ФСБ", "МЧС"}
+MIN_TAG_COUNT = 3
+WHITELIST_MIN_TAG_COUNT = 2
 TAG_STOP_WORDS = RUSSIAN_STOP_WORDS | TAG_BLACKLIST
 
 
@@ -92,6 +99,12 @@ def _is_allowed_entity_tag(text: str, match: re.Match[str]) -> bool:
     if value.isupper() and len(value) < 4 and value not in SHORT_ENTITY_WHITELIST:
         return False
     return True
+
+
+def _meets_tag_count_threshold(tag: str, count: int) -> bool:
+    if tag.upper() in SHORT_ENTITY_WHITELIST:
+        return count >= WHITELIST_MIN_TAG_COUNT
+    return count >= MIN_TAG_COUNT
 
 
 def _parse_json(value: Any) -> Any:
@@ -294,14 +307,11 @@ def _tag_counts(rows: list[Any]) -> list[dict[str, Any]]:
 
     tags_by_key: dict[str, dict[str, Any]] = {}
     for tag, count in word_counter.items():
-        tags_by_key[tag.lower()] = {"tag": tag, "count": count, "type": "word"}
+        if _meets_tag_count_threshold(tag, count):
+            tags_by_key[tag.lower()] = {"tag": tag, "count": count, "type": "word"}
     for tag, count in entity_counter.items():
-        key = tag.lower()
-        current = tags_by_key.get(key)
-        if current is None or count >= current["count"]:
-            tags_by_key[key] = {"tag": tag, "count": count, "type": "entity"}
-        elif current["type"] == "word":
-            current["type"] = "entity"
+        if _meets_tag_count_threshold(tag, count):
+            tags_by_key[tag.lower()] = {"tag": tag, "count": count, "type": "entity"}
 
     return sorted(tags_by_key.values(), key=lambda entry: (-entry["count"], entry["tag"].lower()))[:80]
 
