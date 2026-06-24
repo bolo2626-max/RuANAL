@@ -40,6 +40,11 @@ time { color: #64748b; font-size: 12px; }
 .publication iframe { width: 100%; min-height: 62vh; border: 1px solid #d8e0ea; border-radius: 18px; background: #fff; }
 .fallback-content, .empty-state, .similar { border: 1px solid #d8e0ea; border-radius: 18px; background: #fff; padding: 20px; }
 .fallback-content p { white-space: pre-wrap; line-height: 1.6; }
+.fallback-card-header { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid #e2e8f0; }
+.fallback-card-header h2 { margin: 0 0 6px; font-size: clamp(17px, 2vw, 24px); line-height: 1.25; }
+.fallback-text { margin-bottom: 18px; }
+.fallback-original-link { display: inline-flex; align-items: center; justify-content: center; padding: 10px 14px; border-radius: 12px; background: #2563eb; color: #fff !important; font-weight: 900; text-decoration: none; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12); transition: 0.15s ease; }
+.fallback-original-link:hover { background: #1d4ed8; transform: translateY(-1px); box-shadow: 0 4px 10px rgba(37, 99, 235, 0.22); }
 .fallback-note { margin-top: 0; padding: 10px 12px; border-radius: 12px; background: #eff6ff; color: #1e40af; }
 .media-gallery { display: grid; gap: 10px; justify-content: start; margin-bottom: 14px; }
 .media-gallery.single { grid-template-columns: minmax(0, 280px); }

@@ -4,6 +4,8 @@ import './styles.css';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/+$/, '');
 const ITEMS_PAGE_SIZE = 30;
+const IFRAME_LOAD_TIMEOUT_MS = 12000;
+const IFRAME_BLOCKED_DOMAINS = ['t.me', 'telegram.me', 'epp.genproc.gov.ru'];
 
 async function apiGet(path) {
   const response = await fetch(`${API_BASE_URL}${path}`);
@@ -16,14 +18,29 @@ function formatDate(value) {
   return new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 }
 
-function isTelegramUrl(value) {
-  if (!value) return false;
+function getUrlHostname(value) {
+  if (!value) return '';
   try {
-    const hostname = new URL(value).hostname.toLowerCase();
-    return hostname === 't.me' || hostname.endsWith('.t.me') || hostname === 'telegram.me' || hostname.endsWith('.telegram.me');
+    return new URL(value).hostname.toLowerCase();
   } catch {
-    return value.toLowerCase().includes('t.me/');
+    return '';
   }
+}
+
+function isDomainMatch(hostname, domain) {
+  return hostname === domain || hostname.endsWith(`.${domain}`);
+}
+
+function isTelegramUrl(value) {
+  const hostname = getUrlHostname(value);
+  if (hostname) return isDomainMatch(hostname, 't.me') || isDomainMatch(hostname, 'telegram.me');
+  return String(value || '').toLowerCase().includes('t.me/');
+}
+
+function isIframeBlockedUrl(value) {
+  const hostname = getUrlHostname(value);
+  if (!hostname) return false;
+  return IFRAME_BLOCKED_DOMAINS.some((domain) => isDomainMatch(hostname, domain));
 }
 
 function compactText(value) {
@@ -188,15 +205,43 @@ function NewsGrid({ items, activeItemId, onSelect }) {
   return <div className="news-grid">{items.map((item) => <NewsCard key={item.id} item={item} active={item.id === activeItemId} onClick={onSelect} />)}</div>;
 }
 
+function PublicationFallback({ item, fallbackReason }) {
+  const displayTitle = getDisplayTitle(item);
+
+  return (
+    <div className="fallback-content">
+      {fallbackReason && <p className="fallback-note">{fallbackReason}</p>}
+      <div className="fallback-card-header">
+        <h2>{displayTitle}</h2>
+        <div className="publication-meta">{item.source_name || 'Источник не указан'} · {item.source_type || 'type —'} · {formatDate(item.published_at)}</div>
+      </div>
+      <MediaBlock item={item} />
+      <p className="fallback-text">{item.text || 'Текст публикации отсутствует.'}</p>
+      {item.url && <a className="fallback-original-link" href={item.url} target="_blank" rel="noreferrer">Открыть оригинал</a>}
+    </div>
+  );
+}
+
 function PublicationViewer({ item }) {
   const [iframeFailed, setIframeFailed] = useState(false);
+  const [iframeLoaded, setIframeLoaded] = useState(false);
   const telegramUrl = isTelegramUrl(item?.url);
+  const iframeBlockedUrl = isIframeBlockedUrl(item?.url);
 
-  useEffect(() => setIframeFailed(false), [item?.id]);
+  useEffect(() => {
+    setIframeFailed(false);
+    setIframeLoaded(false);
+  }, [item?.id]);
+
+  useEffect(() => {
+    if (!item?.url || iframeBlockedUrl || iframeLoaded || iframeFailed) return undefined;
+    const timeoutId = window.setTimeout(() => setIframeFailed(true), IFRAME_LOAD_TIMEOUT_MS);
+    return () => window.clearTimeout(timeoutId);
+  }, [item?.id, item?.url, iframeBlockedUrl, iframeLoaded, iframeFailed]);
 
   if (!item) return <div className="empty-state">Выберите публикацию слева.</div>;
 
-  const showFallback = !item.url || telegramUrl || iframeFailed;
+  const showFallback = !item.url || iframeBlockedUrl || iframeFailed;
   const displayTitle = getDisplayTitle(item);
   const fallbackReason = telegramUrl
     ? null
@@ -209,14 +254,15 @@ function PublicationViewer({ item }) {
         <div className="publication-meta">{item.source_name} · {item.source_type} · {formatDate(item.published_at)}</div>
         {item.url && <a href={item.url} target="_blank" rel="noreferrer">Открыть оригинал</a>}
       </header>
-      {!showFallback && <iframe title={displayTitle || `publication-${item.id}`} src={item.url} onError={() => setIframeFailed(true)} />}
-      {showFallback && (
-        <div className="fallback-content">
-          {fallbackReason && <p className="fallback-note">{fallbackReason}</p>}
-          <MediaBlock item={item} />
-          <p>{item.text || 'Текст публикации отсутствует.'}</p>
-        </div>
+      {!showFallback && (
+        <iframe
+          title={displayTitle || `publication-${item.id}`}
+          src={item.url}
+          onLoad={() => setIframeLoaded(true)}
+          onError={() => setIframeFailed(true)}
+        />
       )}
+      {showFallback && <PublicationFallback item={item} fallbackReason={fallbackReason} />}
     </article>
   );
 }
