@@ -56,10 +56,12 @@ WORD_RE = re.compile(r"[0-9A-Za-zА-Яа-яЁёІіЇїЄєҐґ]+")
 URL_RE = re.compile(r"(?:https?://|www\.)\S+|t\.me/\S+", re.IGNORECASE)
 EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
 SERVICE_TAIL_RE = re.compile(
-    r"(?im)(?:^|\n)\s*(?:"
-    r"подписывайтесь\s+на|читайте\s+нас|наш\s+telegram|наш\s+канал|"
-    r"подробнее|источник|следите\s+за\s+новостями"
-    r").*$"
+    r"(?:"
+    r"подписаться(?:\s+на)?|подписывайтесь(?:\s+на)?|читать\s+нас|читайте\s+нас|"
+    r"наш\s+telegram|наш\s+канал|telegram-канал|телеграм-канал|"
+    r"t\.me/|https?://|подробнее|источник|следите\s+за\s+новостями"
+    r")",
+    re.IGNORECASE,
 )
 ENTITY_RE = re.compile(r"(?<![0-9A-Za-zА-Яа-яЁёІіЇїЄєҐґ])(?:[А-ЯЁІЇЄҐ][а-яёіїєґ]{2,}|[А-ЯЁІЇЄҐ]{2,})(?![0-9A-Za-zА-Яа-яЁёІіЇїЄєҐґ])")
 SENTENCE_START_RE = re.compile(r"(?:^|[.!?…]\s+)([А-ЯЁІЇЄҐ][а-яёіїєґ]+|[А-ЯЁІЇЄҐ]{2,})")
@@ -82,8 +84,12 @@ TAG_BLACKLIST = {
     "результате", "территории", "территория", "районе", "ситуация",
     "ситуации", "месте", "место", "стороны", "сторона", "рамках",
     "уровень", "уровне", "власти", "власть",
-    "может", "могут", "нужно", "стал", "стала", "стали", "будут",
-    "объектов", "данные", "территории", "таврия",
+    "может", "могут", "можно", "нужно", "должен", "должна", "должны",
+    "будет", "будут", "стал", "стала", "стали",
+    "объектов", "данные", "территории", "таврия", "таврию",
+    "подписывайтесь", "подписаться", "подписка", "канал", "канала", "канале",
+    "telegram", "телеграм", "читать", "читайте", "наш", "наша", "наше", "наши",
+    "ваш", "ваша", "ваше", "ваши", "tme", "ru", "com", "org", "net", "saldo",
 }
 SHORT_ENTITY_WHITELIST = {"ООН", "НАТО", "США", "РФ", "ЕС", "ВСУ", "БПЛА", "ПВО", "КНР", "МВД", "ФСБ", "МЧС"}
 MIN_TAG_COUNT = 5
@@ -92,9 +98,21 @@ TAG_STOP_WORDS = RUSSIAN_STOP_WORDS | TAG_BLACKLIST
 
 
 def _clean_text_for_tags(text: str) -> str:
-    without_links = URL_RE.sub(" ", text)
-    without_emails = EMAIL_RE.sub(" ", without_links)
-    return SERVICE_TAIL_RE.sub(" ", without_emails)
+    without_emails = EMAIL_RE.sub(" ", text)
+    cleaned_lines = []
+    for line in without_emails.splitlines():
+        if SERVICE_TAIL_RE.search(line):
+            continue
+        cleaned_lines.append(line)
+    without_service_tails = "\n".join(cleaned_lines)
+    return URL_RE.sub(" ", without_service_tails)
+
+
+def _normalize_tag_display(tag: str) -> str:
+    upper_tag = tag.upper()
+    if upper_tag in SHORT_ENTITY_WHITELIST:
+        return upper_tag
+    return tag
 
 
 def _is_technical_tag(word: str) -> bool:
@@ -341,10 +359,10 @@ def _tag_counts(rows: list[Any]) -> list[dict[str, Any]]:
     tags_by_key: dict[str, dict[str, Any]] = {}
     for tag, count in word_counter.items():
         if tag.lower() not in entity_keys and _meets_tag_count_threshold(tag, count):
-            tags_by_key[tag.lower()] = {"tag": tag, "count": count, "type": "word"}
+            tags_by_key[tag.lower()] = {"tag": _normalize_tag_display(tag), "count": count, "type": "word"}
     for tag, count in entity_counter.items():
         if _meets_tag_count_threshold(tag, count):
-            tags_by_key[tag.lower()] = {"tag": tag, "count": count, "type": "entity"}
+            tags_by_key[tag.lower()] = {"tag": _normalize_tag_display(tag), "count": count, "type": "entity"}
 
     return sorted(tags_by_key.values(), key=lambda entry: (-entry["count"], entry["tag"].lower()))[:80]
 
