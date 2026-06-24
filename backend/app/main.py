@@ -53,12 +53,23 @@ RUSSIAN_STOP_WORDS = {
     "этого", "этой", "этом", "этот", "эту", "я", "это", "как", "также", "которые", "который",
 }
 WORD_RE = re.compile(r"[0-9A-Za-zА-Яа-яЁёІіЇїЄєҐґ]+")
+URL_RE = re.compile(r"(?:https?://|www\.)\S+|t\.me/\S+", re.IGNORECASE)
+EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
+SERVICE_TAIL_RE = re.compile(
+    r"(?im)(?:^|\n)\s*(?:"
+    r"подписывайтесь\s+на|читайте\s+нас|наш\s+telegram|наш\s+канал|"
+    r"подробнее|источник|следите\s+за\s+новостями"
+    r").*$"
+)
 ENTITY_RE = re.compile(r"(?<![0-9A-Za-zА-Яа-яЁёІіЇїЄєҐґ])(?:[А-ЯЁІЇЄҐ][а-яёіїєґ]{2,}|[А-ЯЁІЇЄҐ]{2,})(?![0-9A-Za-zА-Яа-яЁёІіЇїЄєҐґ])")
 SENTENCE_START_RE = re.compile(r"(?:^|[.!?…]\s+)([А-ЯЁІЇЄҐ][а-яёіїєґ]+|[А-ЯЁІЇЄҐ]{2,})")
 
 TAG_BLACKLIST = {
-    "подписаться", "читать", "подробнее", "канал", "канале", "telegram", "ссылка", "ссылки",
-    "сегодня", "завтра", "вчера", "также", "далее", "теперь", "сейчас",
+    "подписывайтесь", "подписаться", "подписка", "читать", "читайте", "подробнее",
+    "телеграм", "telegram", "канал", "канале", "канала", "ссылка", "ссылки",
+    "новости", "новость", "материал", "материалы", "источник", "источники",
+    "сообщение", "сообщения", "https", "http", "www", "сегодня", "завтра",
+    "вчера", "также", "далее", "теперь", "сейчас",
     "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря", "января", "февраля", "марта", "апреля", "мая",
     "понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье",
     "года", "год", "день", "дней", "время", "раз", "уже",
@@ -71,15 +82,36 @@ TAG_BLACKLIST = {
     "результате", "территории", "территория", "районе", "ситуация",
     "ситуации", "месте", "место", "стороны", "сторона", "рамках",
     "уровень", "уровне", "власти", "власть",
+    "может", "могут", "нужно", "стал", "стала", "стали", "будут",
+    "объектов", "данные", "территории", "таврия",
 }
 SHORT_ENTITY_WHITELIST = {"ООН", "НАТО", "США", "РФ", "ЕС", "ВСУ", "БПЛА", "ПВО", "КНР", "МВД", "ФСБ", "МЧС"}
-MIN_TAG_COUNT = 3
+MIN_TAG_COUNT = 5
 WHITELIST_MIN_TAG_COUNT = 2
 TAG_STOP_WORDS = RUSSIAN_STOP_WORDS | TAG_BLACKLIST
 
 
+def _clean_text_for_tags(text: str) -> str:
+    without_links = URL_RE.sub(" ", text)
+    without_emails = EMAIL_RE.sub(" ", without_links)
+    return SERVICE_TAIL_RE.sub(" ", without_emails)
+
+
+def _is_technical_tag(word: str) -> bool:
+    return (
+        word.startswith("http")
+        or "://" in word
+        or "t.me" in word
+        or "@" in word
+        or ".ru" in word
+        or ".com" in word
+        or ".org" in word
+        or "/" in word
+    )
+
+
 def _is_allowed_word_tag(word: str) -> bool:
-    return len(word) >= 4 and word not in TAG_STOP_WORDS
+    return len(word) >= 4 and not _is_technical_tag(word) and word not in TAG_STOP_WORDS
 
 
 def _is_sentence_start_blacklisted(text: str, start: int, value: str) -> bool:
@@ -92,7 +124,7 @@ def _is_sentence_start_blacklisted(text: str, start: int, value: str) -> bool:
 def _is_allowed_entity_tag(text: str, match: re.Match[str]) -> bool:
     value = match.group(0)
     key = value.lower()
-    if key in TAG_STOP_WORDS:
+    if key in TAG_STOP_WORDS or _is_technical_tag(key):
         return False
     if _is_sentence_start_blacklisted(text, match.start(), value):
         return False
@@ -300,14 +332,15 @@ def _tag_counts(rows: list[Any]) -> list[dict[str, Any]]:
     entity_counter: Counter[str] = Counter()
     for row in rows:
         data = _row_dict(row)
-        raw_text = f"{data.get('title') or ''} {data.get('text') or ''}"
+        raw_text = _clean_text_for_tags(f"{data.get('title') or ''} {data.get('text') or ''}")
         words = WORD_RE.findall(raw_text.lower())
         word_counter.update(word for word in words if _is_allowed_word_tag(word))
         entity_counter.update(match.group(0) for match in ENTITY_RE.finditer(raw_text) if _is_allowed_entity_tag(raw_text, match))
 
+    entity_keys = {tag.lower() for tag in entity_counter}
     tags_by_key: dict[str, dict[str, Any]] = {}
     for tag, count in word_counter.items():
-        if _meets_tag_count_threshold(tag, count):
+        if tag.lower() not in entity_keys and _meets_tag_count_threshold(tag, count):
             tags_by_key[tag.lower()] = {"tag": tag, "count": count, "type": "word"}
     for tag, count in entity_counter.items():
         if _meets_tag_count_threshold(tag, count):
