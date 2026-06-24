@@ -247,6 +247,14 @@ function PublicationViewer({ item }) {
     ? null
     : 'Оригинал не удалось открыть во встроенном просмотре. Ниже показан текст из базы данных.';
 
+  if (showFallback) {
+    return (
+      <article className="publication">
+        <PublicationFallback item={item} fallbackReason={fallbackReason} />
+      </article>
+    );
+  }
+
   return (
     <article className="publication">
       <header>
@@ -254,15 +262,12 @@ function PublicationViewer({ item }) {
         <div className="publication-meta">{item.source_name} · {item.source_type} · {formatDate(item.published_at)}</div>
         {item.url && <a href={item.url} target="_blank" rel="noreferrer">Открыть оригинал</a>}
       </header>
-      {!showFallback && (
-        <iframe
-          title={displayTitle || `publication-${item.id}`}
-          src={item.url}
-          onLoad={() => setIframeLoaded(true)}
-          onError={() => setIframeFailed(true)}
-        />
-      )}
-      {showFallback && <PublicationFallback item={item} fallbackReason={fallbackReason} />}
+      <iframe
+        title={displayTitle || `publication-${item.id}`}
+        src={item.url}
+        onLoad={() => setIframeLoaded(true)}
+        onError={() => setIframeFailed(true)}
+      />
     </article>
   );
 }
