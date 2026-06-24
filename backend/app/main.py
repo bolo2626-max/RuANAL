@@ -200,18 +200,21 @@ ITEM_LIST_COLUMNS = """
 """
 
 
-def _items_filter_clause(keyword_mode: str | None = None) -> str:
-    clauses = [
-        "(:source_name IS NULL OR source_name = :source_name)",
-        "(:source_type IS NULL OR source_type = :source_type)",
-        "(:date_from IS NULL OR published_at >= CONCAT(:date_from, ' 00:00:00'))",
-        "(:date_to IS NULL OR published_at < DATE_ADD(:date_to, INTERVAL 1 DAY))",
-    ]
+def _items_filter_clause(params: dict[str, Any], keyword_mode: str | None = None) -> str:
+    clauses: list[str] = []
+    if params.get("source_name") is not None:
+        clauses.append("source_name = :source_name")
+    if params.get("source_type") is not None:
+        clauses.append("source_type = :source_type")
+    if params.get("date_from") is not None:
+        clauses.append("published_at >= CONCAT(:date_from, ' 00:00:00')")
+    if params.get("date_to") is not None:
+        clauses.append("published_at < DATE_ADD(:date_to, INTERVAL 1 DAY)")
     if keyword_mode == "fulltext":
         clauses.append("MATCH(title, text) AGAINST(:keyword IN NATURAL LANGUAGE MODE)")
     elif keyword_mode == "like":
         clauses.append("(title LIKE :keyword_like OR text LIKE :keyword_like)")
-    return " AND ".join(clauses)
+    return " AND ".join(clauses) if clauses else "1 = 1"
 
 
 def _fetch_items(db: Session, params: dict[str, Any], keyword_mode: str | None = None) -> list[Any]:
@@ -225,7 +228,7 @@ def _fetch_items(db: Session, params: dict[str, Any], keyword_mode: str | None =
         {ITEM_LIST_COLUMNS.rstrip()}
         {relevance_select}
         FROM content_items_ru
-        WHERE {_items_filter_clause(keyword_mode)}
+        WHERE {_items_filter_clause(params, keyword_mode)}
         ORDER BY {relevance_order}published_at DESC, id DESC
         LIMIT :limit OFFSET :offset
     """), params).fetchall()
@@ -238,7 +241,7 @@ def get_items(
     date_from: str | None = Query(default=None, description="Start date in YYYY-MM-DD format"),
     date_to: str | None = Query(default=None, description="End date in YYYY-MM-DD format"),
     keyword: str | None = Query(default=None, description="Keyword or tag for full-text filtering"),
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=30, ge=1, le=30),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:

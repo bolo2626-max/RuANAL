@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
@@ -362,13 +362,23 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const contentPaneRef = useRef(null);
   const itemsRequestIdRef = useRef(0);
+  const detailRequestIdRef = useRef(0);
   const [itemsLoading, setItemsLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState(null);
 
   useEffect(() => { apiGet('/api/sources').then(setSources).catch((err) => setError(err.message)); }, []);
 
-  function buildItemsPath(nextPage) {
+  const itemsFilterKey = useMemo(() => JSON.stringify({
+    selectedSource,
+    selectedType,
+    dateFrom,
+    dateTo,
+    activeKeyword,
+    searchQuery: searchQuery.trim(),
+  }), [selectedSource, selectedType, dateFrom, dateTo, activeKeyword, searchQuery]);
+
+  const buildItemsPath = useCallback((nextPage) => {
     const params = new URLSearchParams({ limit: String(ITEMS_PAGE_SIZE), offset: String((nextPage - 1) * ITEMS_PAGE_SIZE) });
     if (selectedSource) params.set('source_name', selectedSource);
     if (selectedType) params.set('source_type', selectedType);
@@ -378,13 +388,14 @@ function App() {
     const effectiveKeyword = cleanSearchQuery || activeKeyword;
     if (effectiveKeyword) params.set('keyword', effectiveKeyword);
     return `/api/items?${params}`;
-  }
+  }, [selectedSource, selectedType, dateFrom, dateTo, searchQuery, activeKeyword]);
 
-  function loadItems(nextPage) {
+  const loadItems = useCallback((nextPage) => {
     const requestId = itemsRequestIdRef.current + 1;
     itemsRequestIdRef.current = requestId;
     setItemsLoading(true);
     setError(null);
+    console.time(`loadItems page=${nextPage}`);
     apiGet(buildItemsPath(nextPage))
       .then((data) => {
         if (requestId !== itemsRequestIdRef.current) return;
@@ -396,39 +407,61 @@ function App() {
         if (requestId === itemsRequestIdRef.current) setError(err.message);
       })
       .finally(() => {
+        console.timeEnd(`loadItems page=${nextPage}`);
         if (requestId === itemsRequestIdRef.current) setItemsLoading(false);
       });
-  }
+  }, [buildItemsPath]);
 
   useEffect(() => {
+    if (page !== 1) {
+      setPage(1);
+      return;
+    }
+    setActiveItem(null);
+    setSimilarItems([]);
+    loadItems(1);
+  }, [itemsFilterKey, loadItems]);
+
+  useEffect(() => {
+    if (page === 1) return;
     setActiveItem(null);
     setSimilarItems([]);
     loadItems(page);
-  }, [page, selectedSource, selectedType, dateFrom, dateTo, activeKeyword, searchQuery]);
+  }, [page, loadItems]);
 
   useEffect(() => {
+    console.time('loadTags');
     Promise.all([apiGet('/api/tags/daily'), apiGet('/api/tags/five-days')])
       .then(([daily, fiveDays]) => {
         setDailyTags(daily);
         setFiveDaysTags(fiveDays);
       })
-      .catch((err) => setError(err.message));
+      .catch((err) => setError(err.message))
+      .finally(() => console.timeEnd('loadTags'));
   }, []);
 
   useEffect(() => {
     if (!activeItemId) return;
     contentPaneRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     contentPaneRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    const requestId = detailRequestIdRef.current + 1;
+    detailRequestIdRef.current = requestId;
     setDetailLoading(true);
     setError(null);
+    console.time(`loadItemDetail id=${activeItemId}`);
     Promise.all([apiGet(`/api/items/${activeItemId}`), apiGet(`/api/items/${activeItemId}/similar`)])
       .then(([item, similar]) => {
+        if (requestId !== detailRequestIdRef.current) return;
         setActiveItem(item);
         setSimilarItems(similar);
-        setItems((current) => current.some((entry) => entry.id === item.id) ? current : [{ ...item, text_preview: item.text?.slice(0, 300) }, ...current]);
       })
-      .catch((err) => setError(err.message))
-      .finally(() => setDetailLoading(false));
+      .catch((err) => {
+        if (requestId === detailRequestIdRef.current) setError(err.message);
+      })
+      .finally(() => {
+        console.timeEnd(`loadItemDetail id=${activeItemId}`);
+        if (requestId === detailRequestIdRef.current) setDetailLoading(false);
+      });
   }, [activeItemId]);
 
   function handleSearchChange(nextSearchQuery) {
