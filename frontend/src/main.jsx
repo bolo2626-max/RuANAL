@@ -57,74 +57,64 @@ function getDisplayTitle(item) {
   return sourceText.length > 80 ? `${sourceText.slice(0, 80)}...` : sourceText;
 }
 
-function isImageUrl(value) {
-  if (typeof value !== 'string') return false;
-  const cleanValue = value.split('?')[0].toLowerCase();
-  return /\.(apng|avif|gif|jpe?g|png|svg|webp)$/.test(cleanValue) || value.startsWith('data:image/');
+const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif']);
+const VIDEO_EXTENSIONS = new Set(['mp4', 'webm', 'mov', 'm4v', 'mkv']);
+
+function buildMediaUrl(media) {
+  if (!media || typeof media !== 'object') return null;
+  const remoteUrl = typeof media.url === 'string' ? media.url.trim() : '';
+  if (/^https?:\/\//i.test(remoteUrl)) return remoteUrl;
+  const path = compactText(media.local_path || remoteUrl || media.src || media.path || media.href || media.file);
+  if (!path) return null;
+  if (/^(?:https?:|data:|blob:)/i.test(path)) return path;
+  return `${API_BASE_URL}/${path.replace(/^\/+/, '')}`;
 }
 
-function buildMediaSrc(value) {
-  if (typeof value !== 'string' || !value.trim()) return null;
-  const cleanValue = value.trim();
-  if (/^(https?:|data:|blob:)/i.test(cleanValue)) return cleanValue;
-  return `${API_BASE_URL}/${cleanValue.replace(/^\/+/, '')}`;
+function detectMediaType(media, url) {
+  const path = String(url || '').split(/[?#]/)[0];
+  const extension = path.includes('.') ? path.split('.').pop().toLowerCase() : '';
+  if (IMAGE_EXTENSIONS.has(extension) || String(url || '').startsWith('data:image/')) return 'image';
+  if (VIDEO_EXTENSIONS.has(extension)) return 'video';
+
+  const declaredType = compactText(media?.type || media?.media_type || media?.mime_type || media?.mime || media?.kind).toLowerCase();
+  if (declaredType === 'image' || declaredType.includes('image') || declaredType.includes('photo')) return 'image';
+  if (declaredType === 'video' || declaredType.includes('video')) return 'video';
+  return 'document';
 }
 
-function collectImageUrls(value, result = []) {
-  if (!value) return result;
-
+function normalizeMedia(mediaJson) {
+  let value = mediaJson;
   if (typeof value === 'string') {
-    if (isImageUrl(value)) {
-      const src = buildMediaSrc(value);
-      if (src) result.push(src);
-    }
-    return result;
+    try { value = JSON.parse(value); } catch { value = [{ url: value }]; }
   }
 
-  if (Array.isArray(value)) {
-    value.forEach((entry) => collectImageUrls(entry, result));
-    return result;
-  }
-
-  if (typeof value === 'object') {
-    const type = compactText(value.type || value.media_type || value.mime_type || value.mime || value.kind).toLowerCase();
-    const isImageMedia = type === 'image' || type.includes('image') || type.includes('photo');
-    const candidateKeys = ['local_path', 'url', 'src', 'href', 'path', 'file', 'thumbnail', 'thumb', 'preview', 'image', 'photo'];
-    candidateKeys.forEach((key) => {
-      const candidate = value[key];
-      if (typeof candidate === 'string' && (isImageMedia || isImageUrl(candidate))) {
-        const src = buildMediaSrc(candidate);
-        if (src) result.push(src);
-      } else if (candidate && typeof candidate === 'object') {
-        collectImageUrls(candidate, result);
-      }
-    });
-    Object.entries(value).forEach(([key, candidate]) => {
-      if (candidate && typeof candidate === 'object' && !candidateKeys.includes(key)) {
-        collectImageUrls(candidate, result);
-      }
-    });
-  }
-
-  return result;
-}
-
-function getMediaImages(mediaJson) {
-  return [...new Set(collectImageUrls(mediaJson))];
+  const entries = Array.isArray(value) ? value : value && typeof value === 'object' ? [value] : [];
+  const seen = new Set();
+  return entries.flatMap((entry) => {
+    const media = typeof entry === 'string' ? { url: entry } : entry;
+    const url = buildMediaUrl(media);
+    if (!url || seen.has(url)) return [];
+    seen.add(url);
+    return [{ url, type: detectMediaType(media, url) }];
+  });
 }
 
 function MediaBlock({ item }) {
-  const images = getMediaImages(item?.media_json);
+  const mediaItems = normalizeMedia(item?.media_json);
   const mediaCount = Number(item?.media_count || 0);
 
-  if (images.length > 0) {
+  if (mediaItems.length > 0) {
     return (
-      <section className={`media-gallery ${images.length > 1 ? 'multiple' : 'single'}`} aria-label="Медиа публикации">
-        {images.map((src, index) => (
-          <a key={`${src}-${index}`} href={src} target="_blank" rel="noreferrer" className="media-tile">
-            <img src={src} alt={`Медиа ${index + 1}`} loading="lazy" />
-          </a>
-        ))}
+      <section className={`media-gallery ${mediaItems.length > 1 ? 'multiple' : 'single'}`} aria-label="Медиа публикации">
+        {mediaItems.map((media, index) => {
+          if (media.type === 'image') {
+            return <a key={media.url} href={media.url} target="_blank" rel="noreferrer" className="media-tile"><img src={media.url} alt={`Медиа ${index + 1}`} loading="lazy" /></a>;
+          }
+          if (media.type === 'video') {
+            return <video key={media.url} className="media-video" controls preload="metadata"><source src={media.url} /></video>;
+          }
+          return <a key={media.url} className="media-document" href={media.url} target="_blank" rel="noreferrer">Открыть медиа</a>;
+        })}
       </section>
     );
   }
@@ -262,6 +252,7 @@ function PublicationViewer({ item }) {
         <div className="publication-meta">{item.source_name} · {item.source_type} · {formatDate(item.published_at)}</div>
         {item.url && <a href={item.url} target="_blank" rel="noreferrer">Открыть оригинал</a>}
       </header>
+      <MediaBlock item={item} />
       <iframe
         title={displayTitle || `publication-${item.id}`}
         src={item.url}
@@ -361,9 +352,11 @@ function App() {
   const [activeKeyword, setActiveKeyword] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const contentPaneRef = useRef(null);
+  const newsScrollRef = useRef(null);
   const itemsRequestIdRef = useRef(0);
   const detailRequestIdRef = useRef(0);
   const [itemsLoading, setItemsLoading] = useState(false);
+  const [loadedPage, setLoadedPage] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -402,6 +395,7 @@ function App() {
         setItems(data);
         setHasNextPage(data.length === ITEMS_PAGE_SIZE);
         setActiveItemId(data[0]?.id || null);
+        setLoadedPage(nextPage);
       })
       .catch((err) => {
         if (requestId === itemsRequestIdRef.current) setError(err.message);
@@ -428,6 +422,14 @@ function App() {
     setSimilarItems([]);
     loadItems(page);
   }, [page, loadItems]);
+
+  useEffect(() => {
+    if (loadedPage !== page) return;
+    const frameId = window.requestAnimationFrame(() => {
+      newsScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [loadedPage, page]);
 
   useEffect(() => {
     console.time('loadTags');
@@ -476,32 +478,30 @@ function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className="dashboard">
+      <header className="top-toolbar">
+        <div className="brand"><h1>RuANAL</h1><span>Media reader MVP</span></div>
+        <SourceFilter
+          sources={sources}
+          selectedSource={selectedSource}
+          selectedType={selectedType}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          searchQuery={searchQuery}
+          onChange={({ sourceType, sourceName }) => { setSelectedType(sourceType); setSelectedSource(sourceName); setPage(1); }}
+          onDateChange={({ dateFrom: nextDateFrom, dateTo: nextDateTo }) => { setDateFrom(nextDateFrom); setDateTo(nextDateTo); setPage(1); }}
+          onSearchChange={handleSearchChange}
+          onSearchClear={handleSearchClear}
+        />
+        {activeKeyword && !searchQuery.trim() && <div className="active-tag-filter">Тег: {activeKeyword}<button type="button" onClick={() => { setActiveKeyword(null); setPage(1); }} aria-label="Очистить фильтр по тегу">✕</button></div>}
+      </header>
+      <div className="app-shell">
       <aside className="sidebar">
-        <div className="sidebar-sticky">
-          <div className="brand"><h1>RuANAL</h1><span>Media reader MVP</span></div>
-          <SourceFilter
-            sources={sources}
-            selectedSource={selectedSource}
-            selectedType={selectedType}
-            dateFrom={dateFrom}
-            dateTo={dateTo}
-            searchQuery={searchQuery}
-            onChange={({ sourceType, sourceName }) => { setSelectedType(sourceType); setSelectedSource(sourceName); setPage(1); }}
-            onDateChange={({ dateFrom: nextDateFrom, dateTo: nextDateTo }) => { setDateFrom(nextDateFrom); setDateTo(nextDateTo); setPage(1); }}
-            onSearchChange={handleSearchChange}
-            onSearchClear={handleSearchClear}
-          />
-          {activeKeyword && !searchQuery.trim() && (
-            <div className="active-tag-filter">
-              Тег: {activeKeyword}
-              <button type="button" onClick={() => { setActiveKeyword(null); setPage(1); }} aria-label="Очистить фильтр по тегу">✕</button>
-            </div>
-          )}
+        <div className="sidebar-status">
           {(itemsLoading || detailLoading) && <div className="status">Загрузка…</div>}
           {error && <div className="error">{error}</div>}
         </div>
-        <NewsGrid items={items} activeItemId={activeItemId} onSelect={setActiveItemId} />
+        <div className="news-scroll" ref={newsScrollRef}><NewsGrid items={items} activeItemId={activeItemId} onSelect={setActiveItemId} /></div>
         <Pagination page={page} hasNextPage={hasNextPage} loading={itemsLoading} onPageChange={setPage} />
       </aside>
       <section className="content-pane" ref={contentPaneRef}>
@@ -509,6 +509,7 @@ function App() {
         <SimilarItems items={similarItems} loading={detailLoading} onSelect={setActiveItemId} />
       </section>
       <AnalyticsPane dailyTags={dailyTags} fiveDaysTags={fiveDaysTags} activeKeyword={searchQuery.trim() ? null : activeKeyword} onSelectTag={(tag) => { setSearchQuery(''); setActiveKeyword(tag); setPage(1); }} />
+      </div>
     </main>
   );
 }
